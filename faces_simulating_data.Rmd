@@ -9,18 +9,35 @@ We will be doing Weighed Bayesian (WBA) and Simple Bayesian (SBA) on face-trustw
 Main difference is that weighted has 2 weights that affect the final trustworthiness vote: one for "weight of own first vote" (w1) and one for "weight of group vote influence" (w2)
 For WBA these can vary, for SBA the evidence will be weighed the same regardless of where it comes from (from oneself or from social interaction)
 Since people are social creatures, the SBA should be worse overall.
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 pacman::p_load(
   tidyverse, # Data manipulation and plotting
   dplyr,
-  here       # Robust file paths
+  here, # Robust file paths
+  ggplot2 # Robust file paths
 )
 ```
 
 #some data exploration
 ```{r}
+#there are 80 faces
+#mby plot this to see better
 
+df <- read_csv("data/cogsci_clean.csv")
+
+df %>% 
+  group_by(FaceID) %>%
+  summarize(mean_TRUST_first = mean(FirstRating))
+
+df %>% 
+  group_by(FaceID) %>%
+  summarize(mean_TRUST_first = mean(SecondRating))
+
+df %>% 
+  group_by(FaceID) %>%
+  summarize(mean_TRUST_first = mean(FirstRating)-mean(SecondRating))
 ```
 
 #generate data that fits WBA and data that fits SBA specifically
