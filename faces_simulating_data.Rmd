@@ -23,6 +23,7 @@ pacman::p_load(
 #some data exploration
 ```{r}
 #there are 80 faces
+#0-8 scores
 #mby plot this to see better
 
 df <- read_csv("data/cogsci_clean.csv")
@@ -33,15 +34,26 @@ df %>%
 
 df %>% 
   group_by(FaceID) %>%
-  summarize(mean_TRUST_first = mean(SecondRating))
+  summarize(mean_TRUST_second = mean(SecondRating))
 
 df %>% 
   group_by(FaceID) %>%
-  summarize(mean_TRUST_first = mean(FirstRating)-mean(SecondRating))
+  summarize(mean_TRUST_change = mean(FirstRating)-mean(SecondRating))
 ```
 
 #generate data that fits WBA and data that fits SBA specifically
+#data has to be generated differently for each model(?)
 ```{r}
+#first data for WBA should have a set of random face scores (we can maybe just use the mean score from the original exp for each face?) (or just random score near the middle point with some extra variability?)
+#there's some randomness for each participant, and the "randomness" results in a differing group score
+#the WBA agent weighs the evidence differently: they really care about the social score
+#so in the 2nd rating, they generally (with some randomness) gravitate towards the "Feedback" in their score
+```
 
+```{r}
+#2nd data for SBA should have a set of random face scores (we can maybe just use the mean score from the original exp for each face?) (or just random score near the middle point with some extra variability?)
+#there's some randomness for each participant, and the "randomness" results in a differing group score
+#the SBA agent weighs the evidence the same
+#so in the 2nd rating, they generally gravitate to the social score less?
 ```
 
