@@ -5,7 +5,7 @@ date: "2026-04-10"
 ---
 
 #Note
-We will be doing Weighed Bayesian (WBA) and Simple Bayesian (SBA) on face-trustworthiness (3 ratings)
+We will be doing Weighed Bayesian (WBA) and Simple Bayesian (SBA) on face-trustworthiness (2 rating sessions per participant, 0-8 scoring)
 Main difference is that weighted has 2 weights that affect the final trustworthiness vote: one for "weight of own first vote" (w1) and one for "weight of group vote influence" (w2)
 For WBA these can vary, for SBA the evidence will be weighed the same regardless of where it comes from (from oneself or from social interaction)
 Since people are social creatures, the SBA should be worse overall.
@@ -24,10 +24,14 @@ pacman::p_load(
 ```{r}
 #there are 80 faces
 #0-8 scores
-#feedback is NA when the participant is the first one to see the face
 #mby plot this to see better
+#-3 to +3 feedback
 
 df <- read_csv("data/cogsci_clean.csv")
+
+#ignore faces with no feedback
+df <- df %>%
+  filter(!is.na(Feedback))
 
 df %>% 
   group_by(FaceID) %>%
@@ -43,14 +47,18 @@ df %>%
 ```
 
 #generate data that fits WBA and data that fits SBA specifically
-#data has to be generated differently for each model(?)
+#data has to be generated differently for each model (namely, the 2nd choice)
 ```{r}
-#first data for WBA should have a set of random face scores (we can maybe just use the mean score from the original exp for each face?, with some randomness around them for individual variability)
-#the "randomness" results in a differing group score (make sure there's enough variation)
-#the WBA agent weighs the evidence differently: they really care about the social score (0.75:0.25 for example)
-#so in the 2nd rating, they generally (with some randomness) gravitate towards the "Feedback" in their score
+faces_n <- 80
 
-#feedback is NA when the participant is the first one to see the face!! It gets updated over time
+#generate a "mean trustworthiness fixation value" for each face
+#for each face in df, generate the first score with some randomness around this fixation mean (face-specific)
+#then, using the mean score of all participants thus far, give each participant FEEDBACK (the feedback is 0 if you're the first)
+#then, for each participant, do the trials again for their 2nd score: every participant receives feedback and should weigh it for their final scoring according to the WBA logic (0.75:0.25)
+
+#either this, or generate the first score completely at random (but they might really clash?)
+
+#also... the group rating changes? meaning its being updated throughout? right now it would be the same for all...
 ```
 
 ```{r}
@@ -58,7 +66,5 @@ df %>%
 #the "randomness" results in a differing group score (make sure there's enough variation)
 #the SBA agent weighs the evidence the same (1:1)
 #so in the 2nd rating, they generally gravitate to the social score less?
-
-#feedback is NA when the participant is the first one to see the face!! It gets updated over time
 ```
 
