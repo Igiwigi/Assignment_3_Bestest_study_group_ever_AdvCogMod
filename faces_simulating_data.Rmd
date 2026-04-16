@@ -18,53 +18,176 @@ pacman::p_load(
   here, # Robust file paths
   ggplot2 # Robust file paths
 )
+
+#there are 80 faces
+#0-8 scores
+#-3 to +3 feedback
+df <- read_csv("data/cogsci_clean.csv") %>%
+  filter(!is.na(Feedback))
+
+set.seed(123)
 ```
 
 #some data exploration
 ```{r}
-#there are 80 faces
-#0-8 scores
-#mby plot this to see better
-#-3 to +3 feedback
+# Rating distr (first rating & second rating) per face
+df %>% 
+  group_by(FaceID) %>% 
+  summarize(
+    First = mean(FirstRating),
+    Second = mean(SecondRating)
+  ) %>% 
+  ggplot(aes(FaceID)) +
+  geom_point(aes(y = First, color = "First")) +
+  geom_line(aes(y = First, color = "First"), linewidth = 1) +
+  geom_point(aes(y = Second, color = "Second")) +
+  geom_line(aes(y = Second, color = "Second"), linewidth = 1) +
+  labs(y = "Mean Rating", color = NULL) +
+  theme_minimal()
+#they dont change very much
 
-df <- read_csv("data/cogsci_clean.csv")
+#histogram of each rating (roughly normal-ish? few extremes)
+df %>%
+  pivot_longer(c(FirstRating, SecondRating),
+               names_to = "Type",
+               values_to = "Rating") %>%
+  ggplot(aes(Rating, fill = Type)) +
+  geom_histogram(bins = 20, alpha = 0.7) +
+  facet_wrap(~Type) +
+  labs(
+    title = "Distribution of First vs Second Ratings",
+    x = "Rating",
+    y = "Count",
+    fill = NULL
+  ) +
+  theme_minimal()
 
-#ignore faces with no feedback
-df <- df %>%
-  filter(!is.na(Feedback))
-
+#Mean change between 1st and 2nd (mostly trust lowers)
 df %>% 
   group_by(FaceID) %>%
-  summarize(mean_TRUST_first = mean(FirstRating))
+  summarize(mean_TRUST_change = mean(SecondRating) - mean(FirstRating)) %>%
+  mutate(overall_mean = mean(mean_TRUST_change)) %>%
+  ggplot(aes(x = reorder(FaceID, mean_TRUST_change), y = mean_TRUST_change, group = 1)) +
+  geom_line() +
+  geom_point(aes(color = ifelse(mean_TRUST_change > 0, "Increased Trust", "Decreased Trust")), 
+             size = 2.5) +
+  geom_hline(aes(yintercept = overall_mean), linetype = "dashed", color = "black", linewidth = 0.7) + #mean, add to legend later
+  scale_color_manual(values = c("Increased Trust" = "#2E8B57", 
+                               "Decreased Trust" = "#CD5C5C")) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  labs(
+    title = "Mean Change in Trust Ratings (First - Second)",
+    x = "Face ID",
+    y = "Mean Change",
+    color = "Trust Change"
+  ) +
+  theme_minimal()+ 
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) #theyre kinda crowded and ugly looking so omitting the x lab
 
-df %>% 
+#to see which face is which (not really useful that though)
+df %>%
   group_by(FaceID) %>%
-  summarize(mean_TRUST_second = mean(SecondRating))
-
-df %>% 
-  group_by(FaceID) %>%
-  summarize(mean_TRUST_change = mean(FirstRating)-mean(SecondRating))
+  summarize(
+    mean_first = mean(FirstRating),
+    mean_second = mean(SecondRating),
+    mean_change = round(mean_second - mean_first,2)
+  ) %>%
+  arrange(desc(mean_change))
 ```
 
-#generate data that fits WBA and data that fits SBA specifically
-#data has to be generated differently for each model (namely, the 2nd choice)
-```{r}
-faces_n <- 80
 
+```{r generating_wba_sba_data_func}
 #generate a "mean trustworthiness fixation value" for each face
 #for each face in df, generate the first score with some randomness around this fixation mean (face-specific)
-#then, using the mean score of all participants thus far, give each participant FEEDBACK (the feedback is 0 if you're the first)
-#then, for each participant, do the trials again for their 2nd score: every participant receives feedback and should weigh it for their final scoring according to the WBA logic (0.75:0.25)
+#then, using the mean score of all participants thus far, give each participant FEEDBACK (the feedback is 0 if you're the first?)
+#then, for each participant, do the trials again for their 2nd score: every participant receives feedback and should weigh it for their final scoring according to the WBA logic (0.25:0.75) of evidence. w1 is own choice, w2 is group mean (which is the "social" influence). this assumes that the participant is social and that the data-generation process is differently affected by differing evidence
 
-#either this, or generate the first score completely at random (but they might really clash?)
+simulate_face_trust_data <- function(face_id, mu, W1, W2) {
 
-#also... the group rating changes? meaning its being updated throughout? right now it would be the same for all...
+  first_ratings  <- numeric(n_participants)
+  second_ratings <- numeric(n_participants)
+  feedback_vec   <- numeric(n_participants)
+  group_means    <- numeric(n_participants)
+
+  for (p in 1:n_participants) {
+
+    #FIRST RATING
+    first <- rnorm(1, mu, 1.2)
+    first <- round(first) #so its a full integer
+    first <- max(0, min(8, first)) # so its 0-8
+
+    #GROUP MEAN SO FAR
+    if (p == 1) {
+      group_mean <- first   #group mean is their rating, so feedback is 0?
+      feedback   <- 0
+    } else {
+      group_mean <- mean(first_ratings[1:(p-1)]) #from participant 2 onwards, the group mean feedback is the mean of all previous participants' first ratings (seemed to vary similarly in the exp?)
+      feedback   <- round(group_mean - first)
+      feedback   <- max(-3, min(3, feedback))
+    }
+
+    #SECOND RATING WBA
+    second <- W1 * first + W2 * group_mean + rnorm(1, 0, noise_sd)
+    second <- round(second)
+    second <- max(0, min(8, second)) 
+    #cat(paste(first, "first", second, "second",  face_id, "face_id"), "\n") *#testing
+
+    #SAVE VALUES
+    first_ratings[p]  <- first
+    second_ratings[p] <- second
+    feedback_vec[p]   <- feedback
+    group_means[p]    <- group_mean
+  }
+  
+  #SAVE AS TIBBLE
+  tibble(
+    FaceID        = face_id,
+    ParticipantID = 1:n_participants,
+    FirstRating   = first_ratings,
+    SecondRating  = second_ratings,
+    Feedback      = feedback_vec,
+    GroupMean     = round(group_means, 2)
+  )
+}
+
+# latent "true" trustworthiness for each face (a random mean) (same for both WBA and SBA)
+n_faces  <- 80 #to kinda match the og exp, change if needed
+
+face_params <- tibble(
+  FaceID = 1:n_faces,
+  fixation_mean = rnorm(n_faces, mean = 4, sd = 1.2) %>% #to mimic the real data, which is kind of a "normal" distribution
+  pmax(2) %>%
+  pmin(7)
+)
 ```
 
-```{r}
-#2nd data for SBA should have a set of random face scores (we can maybe just use the mean score from the original exp for each face?, with some randomness around them for individual variability)
-#the "randomness" results in a differing group score (make sure there's enough variation)
-#the SBA agent weighs the evidence the same (1:1)
-#so in the 2nd rating, they generally gravitate to the social score less?
+```{r WBA}
+n_participants  <- 100
+W1       <- 0.25 #weight of own choice
+W2       <- 0.75 #weight of social influence
+noise_sd <- 0.5
+
+df_seq_WBA <- map_dfr(
+  1:n_faces,
+  ~ simulate_face_trust_data(.x, face_params$fixation_mean[.x], W1, W2)
+)
+
+write_csv(df_seq_WBA, "data/synthetic_WBA.csv")
+```
+
+```{r SBA}
+#2nd data for SBA is the same but the evidence is weighed the same regardless of where it comes from (from oneself or from social interaction)
+n_participants  <- 100
+W1       <- 0.5 #weight of own choice
+W2       <- 0.5 #weight of social influence
+noise_sd <- 0.5
+
+df_seq_SBA <- map_dfr(
+  1:n_faces,
+  ~ simulate_face_trust_data(.x, face_params$fixation_mean[.x], W1, W2)
+)
+
+write_csv(df_seq_SBA, "data/synthetic_SBA.csv")
+
 ```
 
