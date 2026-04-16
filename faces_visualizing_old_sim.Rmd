@@ -16,7 +16,7 @@ pacman::p_load(
   tidyverse, # Data manipulation and plotting
   dplyr,
   here, # Robust file paths
-  ggplot2 # Robust file paths
+  ggplot2
 )
 
 #there are 80 faces
@@ -161,6 +161,7 @@ face_params <- tibble(
 )
 ```
 
+
 ```{r WBA}
 n_participants  <- 100
 W1       <- 0.25 #weight of own choice
@@ -190,4 +191,3 @@ df_seq_SBA <- map_dfr(
 write_csv(df_seq_SBA, "data/synthetic_SBA.csv")
 
 ```
-

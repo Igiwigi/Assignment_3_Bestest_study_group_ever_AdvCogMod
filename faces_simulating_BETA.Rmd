@@ -1,0 +1,318 @@
+---
+title: "face_simulating_data_trying"
+output: html_document
+date: "2026-04-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(
+  tidyverse, # Data manipulation and plotting
+  dplyr,
+  here, # Robust file paths
+  ggplot2 #ggplot
+)
+```
+
+#doing it correctly now, as a beta (trying)
+hopefully this is correct-ish at least?
+
+this produces the data for the 3 different agents we need for the experiment: selfish, balanced, social (defaults from Ricardo's notebook)
+
+#!!!!!!
+THIS DOESNT HAVE THE RHO & KAPPA FIX FOR WBA YET (need to make the betaFaceModel rely on a kappa and rho values, like in notebook)
+--> this will change the logic & values for w_direct and w_social I think (the selfish, balanced, social agent specifications)
+(just follow the notebook i think?)
+#!!!!!!
+
+AFTERWARDS need to make the 2 models (WBA and SBA) and fit them to each of the 3 datasets separately (to figure out "which model generated it") + model recovery & then in the end fit them to the real cogsci data to see how they deal with it
+```{r}
+# Core belief-update function for face trustworthiness
+# same priors etc. as example
+# treating the ratings as counts (hopefully its right? it still hasnt been made into ratios as per 9th lecture)
+betaFaceModel <- function(alpha_prior = 0.5, beta_prior = 0.5,
+                          trust1, total1,
+                          group_trust_mean, n_total_rating = 7,
+                          w_direct, w_social) {
+  
+  # posterior update (structure taken basically from examples)
+  alpha_post <- alpha_prior + w_direct * trust1 +
+                               w_social * group_trust_mean
+  
+  beta_post  <- beta_prior  + w_direct * (total1 - trust1) +
+                               w_social * (n_total_rating - group_trust_mean)
+
+  expected_trust <- alpha_post / (alpha_post + beta_post)
+  ci_lower       <- qbeta(0.025, alpha_post, beta_post)
+  ci_upper       <- qbeta(0.975, alpha_post, beta_post)
+
+  list(
+    alpha_post     = alpha_post,
+    beta_post      = beta_post,
+    expected_trust = expected_trust,
+    ci_lower       = ci_lower,
+    ci_upper       = ci_upper
+  )
+}
+
+#the 3 agents!!!!! (note, here they dont sum up to 1) (havent added rho or kappa yet)
+agents <- tibble(
+  agent_type    = c("Self-Focused", "Balanced", "Socially-Influenced"),
+  weight_direct = c(1.5, 1.0, 0.5),
+  weight_social = c(0.5, 1.0, 2.0)
+)
+
+#the actual script that combines the experimental design with the beta
+simulate_face_data_beta <- function(face_id, true_mean_face,
+                                     w_direct, w_social,
+                                     n_participants = 1000,
+                                     n_total_rating = 7) {
+  
+  first_ratings  <- numeric(n_participants)
+  second_ratings <- numeric(n_participants)
+  group_trust_means <- numeric(n_participants)
+  feedback_vec   <- numeric(n_participants)
+  
+  for (p in 1:n_participants) {
+    
+    # FIRST RATING (own perceptual evidence)
+    # (multiple steps to fix a NA issue)
+    prob <- true_mean_face / n_total_rating
+    prob <- max(0, min(1, prob))
+    first <- rbinom(1, 7, prob)
+    # print(first)
+    
+    # GROUP MEAN (social info)
+    if (p == 1) {
+      group_trust_mean <- first
+      feedback   <- 0 #no feedback for first rating
+    } else {
+      group_trust_mean <- round(mean(first_ratings[1:(p-1)])) #mean rating of everyone but you... so far (running average) (order matters)
+      group_trust_mean <- max(0, min(n_total_rating, group_trust_mean))
+      feedback   <- round(group_trust_mean - first) #feedback is the difference
+      feedback   <- max(-3, min(3, feedback)) #feedback can only be -3 to 3
+    }
+    
+    # BETA UPDATE
+    result <- betaFaceModel(
+      trust1 = first,
+      total1 = n_total_rating,
+      group_trust_mean = group_trust_mean,
+      n_total_rating = n_total_rating,
+      w_direct = w_direct,
+      w_social = w_social
+    )
+    
+    # probability matching
+    theta_sample <- rbeta(1, result$alpha_post, result$beta_post)
+    second <- rbinom(1, 7, theta_sample)
+
+    # SAVE
+    first_ratings[p]  <- first
+    second_ratings[p] <- second
+    group_trust_means[p] <- group_trust_mean
+    feedback_vec[p]   <- feedback
+  }
+  
+  tibble(
+  FaceID        = face_id,
+  ParticipantID = 1:n_participants,
+  FirstRating   = first_ratings,
+  SecondRating  = second_ratings,
+  GroupTrustMean = round(group_trust_means, 2),
+  Feedback       = feedback_vec
+)
+}
+```
+
+```{r}
+generate_all_agents <- function(agents,
+                                n_faces = 80,
+                                n_participants = 1000) {
+  
+  # mean face trustowrthiness, latent (same across agents!)
+  face_params <- tibble(
+    FaceID = 1:n_faces,
+    raw_face_value = rnorm(n_faces, mean = 4, sd = 1.2)
+  ) %>%
+    mutate(
+      true_mean_face = pmin(pmax(raw_face_value, 1), 8), #to keep it in 1-8 (this does truncate tails though)
+    )
+
+  # loop over agent types
+  agents %>%
+    mutate(data = pmap(
+      list(agent_type, weight_direct, weight_social),
+      function(agent_type, w_d, w_s) {
+        
+        df <- map_dfr(1:n_faces, function(f) {
+          simulate_face_data_beta(
+            face_id = f,
+            true_mean_face = face_params$true_mean_face[f],
+            w_direct = w_d,
+            w_social = w_s,
+            n_participants = n_participants
+          )
+        })
+        
+        df %>%
+          mutate(
+            agent_type = agent_type,
+            FirstRating  = FirstRating + 1, #so its not 0-7 but 1-8
+            SecondRating = SecondRating + 1
+          )}
+    )) %>%
+    select(agent_type, data)
+}
+
+all_data <- generate_all_agents(agents)
+
+write_csv(all_data$data[[1]], "data/self_focused_WBA_agent.csv")
+write_csv(all_data$data[[2]], "data/SBA_agent.csv")
+write_csv(all_data$data[[3]], "data/socially_influenced_WBA_agent.csv")
+```
+
+#visualizing them (make the plots better, mostly just checking to make sure they arent the same)
+```{r}
+self      <- read_csv("data/self_focused_WBA_agent.csv") %>% mutate(agent_type = "Self-Focused")
+balanced  <- read_csv("data/SBA_agent.csv") %>% mutate(agent_type = "Balanced")
+social    <- read_csv("data/socially_influenced_WBA_agent.csv") %>% mutate(agent_type = "Socially-Influenced")
+```
+```{r}
+self_summary <- self %>% 
+  group_by(FaceID) %>% 
+  summarize(
+    First = mean(FirstRating),
+    Second = mean(SecondRating),
+    agent_type = "Self-Focused"
+  )
+
+balanced_summary <- balanced %>% 
+  group_by(FaceID) %>% 
+  summarize(
+    First = mean(FirstRating),
+    Second = mean(SecondRating),
+    agent_type = "Balanced"
+  )
+
+social_summary <- social %>% 
+  group_by(FaceID) %>% 
+  summarize(
+    First = mean(FirstRating),
+    Second = mean(SecondRating),
+    agent_type = "Socially-Influenced"
+  )
+
+plot_data <- bind_rows(self_summary, balanced_summary, social_summary) %>%
+  pivot_longer(c(First, Second),
+               names_to = "Type",
+               values_to = "Rating")
+
+#summarizing (means are different but similar... that said, most faces are about 4-5 trustworthy, i guess?)
+self %>% summarize(mean_first = mean(FirstRating),
+                   mean_second = mean(SecondRating))
+
+balanced %>% summarize(mean_first = mean(FirstRating),
+                       mean_second = mean(SecondRating))
+
+social %>% summarize(mean_first = mean(FirstRating),
+                     mean_second = mean(SecondRating))
+```
+#plotting overall ratings (1st, 2nd)
+```{r}
+ggplot(plot_data, aes(FaceID, Rating, color = interaction(agent_type, Type))) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.5) +
+  labs(
+    title = "First vs Second Ratings (All Agent Types)",
+    color = "Agent × Rating"
+  ) +
+  theme_minimal()+
+  facet_wrap(~agent_type)
+```
+```{r}
+self %>% mutate(agent_type = "Self-Focused") %>%
+  bind_rows(balanced %>% mutate(agent_type = "Balanced"),
+            social %>% mutate(agent_type = "Socially-Influenced")) %>%
+  pivot_longer(c(FirstRating, SecondRating),
+               names_to = "Type",
+               values_to = "Rating") %>%
+  ggplot(aes(Rating, fill = agent_type)) +
+  geom_histogram(alpha = 0.4, bins = 20, position = "identity") +
+  facet_grid(agent_type ~ Type) +
+  labs(
+    title = "Rating Distributions by Agent Type",
+    fill = "Agent Type"
+  ) +
+  theme_minimal()
+```
+
+#plotting change from 1st to 2nd
+```{r}
+self_change <- self %>%
+  group_by(FaceID) %>%
+  summarize(mean_change = mean(SecondRating - FirstRating),
+            agent_type = "Self-Focused")
+
+balanced_change <- balanced %>%
+  group_by(FaceID) %>%
+  summarize(mean_change = mean(SecondRating - FirstRating),
+            agent_type = "Balanced")
+
+social_change <- social %>%
+  group_by(FaceID) %>%
+  summarize(mean_change = mean(SecondRating - FirstRating),
+            agent_type = "Socially-Influenced")
+
+change_data <- bind_rows(self_change, balanced_change, social_change)
+
+change_data %>%
+  group_by(agent_type) %>%
+  group_split() %>%
+  purrr::walk(function(df) {
+
+    overall_mean <- mean(df$mean_change)
+
+    p <- df %>%
+      ggplot(aes(
+        x = reorder(FaceID, mean_change),
+        y = mean_change,
+        group = 1
+      )) +
+      geom_line() +
+      geom_point(aes(
+        color = ifelse(mean_change > 0,
+                       "Increased Trust",
+                       "Decreased Trust")
+      ), size = 2.5) +
+      geom_hline(
+        yintercept = overall_mean,
+        linetype = "dashed",
+        color = "black",
+        linewidth = 0.7
+      ) +
+      scale_color_manual(values = c(
+        "Increased Trust" = "#2E8B57",
+        "Decreased Trust" = "#CD5C5C"
+      )) +
+      labs(
+        title = paste("Mean Change in Trust Ratings (First - Second):", unique(df$agent_type)),
+        x = "Face ID",
+        y = "Mean Change",
+        color = "Trust Change"
+      ) +
+      theme_minimal() +
+      theme(
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()
+      )
+
+    print(p)
+  })
+
+#this does differ from the actual cogsci data (but i mean... that had a lot less samples?)
+#also, were likely not capturing some psychological effect (like reacting strongly to negative disagreement: i.e. group thinks someone is much less trustworthy than you, so you adjust due to caring more about negative feedback... or smth)
+```
+
+
+
