@@ -4,6 +4,11 @@ output: html_document
 date: "2026-04-16"
 ---
 
+#doing it correctly now, as a beta (trying)
+hopefully this is correct-ish at least?
+
+this produces the data for the 3 different agents we need for the experiment: selfish, balanced, social (defaults from Ricardo's notebook)
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 pacman::p_load(
@@ -14,18 +19,16 @@ pacman::p_load(
 )
 ```
 
-#doing it correctly now, as a beta (trying)
-hopefully this is correct-ish at least?
-
-this produces the data for the 3 different agents we need for the experiment: selfish, balanced, social (defaults from Ricardo's notebook)
-
 #!!!!!!
 THIS DOESNT HAVE THE RHO & KAPPA FIX FOR WBA YET (need to make the betaFaceModel rely on a kappa and rho values, like in notebook)
---> this will change the logic & values for w_direct and w_social I think (the selfish, balanced, social agent specifications)
+--> this will change the logic & values for w_direct and w_social (the selfish, balanced, social agent specifications, since they can be defined with rho and kappa)
 (just follow the notebook i think?)
 #!!!!!!
 
+#!!!
 AFTERWARDS need to make the 2 models (WBA and SBA) and fit them to each of the 3 datasets separately (to figure out "which model generated it") + model recovery & then in the end fit them to the real cogsci data to see how they deal with it
+#!!!
+
 ```{r}
 # Core belief-update function for face trustworthiness
 # same priors etc. as example
@@ -174,50 +177,63 @@ write_csv(all_data$data[[3]], "data/socially_influenced_WBA_agent.csv")
 
 #visualizing them (make the plots better, mostly just checking to make sure they arent the same)
 ```{r}
-self      <- read_csv("data/self_focused_WBA_agent.csv") %>% mutate(agent_type = "Self-Focused")
-balanced  <- read_csv("data/SBA_agent.csv") %>% mutate(agent_type = "Balanced")
-social    <- read_csv("data/socially_influenced_WBA_agent.csv") %>% mutate(agent_type = "Socially-Influenced")
+all_df <- bind_rows(all_data$data, .id = "agent_type") %>%
+  mutate(agent_type = recode(agent_type,
+                             "1" = "Self-Focused",
+                             "2" = "Balanced",
+                             "3" = "Socially-Influenced"))
 ```
+
 ```{r}
-self_summary <- self %>% 
-  group_by(FaceID) %>% 
-  summarize(
-    First = mean(FirstRating),
-    Second = mean(SecondRating),
-    agent_type = "Self-Focused"
+# overall summaries
+all_data %>%
+  mutate(summary = map(data, ~
+    .x %>%
+      summarize(
+        mean_first  = mean(FirstRating),
+        mean_second = mean(SecondRating)
+      )
+  )) %>%
+  select(agent_type, summary) %>%
+  unnest(summary)
+
+# face-level changes
+all_data %>%
+  mutate(summary = map(data, ~
+    .x %>%
+      group_by(FaceID) %>%
+      summarize(
+        mean_first  = mean(FirstRating),
+        mean_second = mean(SecondRating),
+        mean_change = mean(SecondRating - FirstRating),
+        .groups = "drop"
+      )
+  )) %>%
+  select(agent_type, summary) %>%
+  unnest(summary)
+
+#for plotting
+plot_data <- all_data %>%
+  mutate(summary = map(data, ~
+    .x %>%
+      group_by(FaceID) %>%
+      summarize(
+        First  = mean(FirstRating),
+        Second = mean(SecondRating),
+        .groups = "drop"
+      )
+  )) %>%
+  select(agent_type, summary) %>%
+  unnest(summary) %>%
+  pivot_longer(
+    cols = c(First, Second),
+    names_to = "Type",
+    values_to = "Rating"
   )
 
-balanced_summary <- balanced %>% 
-  group_by(FaceID) %>% 
-  summarize(
-    First = mean(FirstRating),
-    Second = mean(SecondRating),
-    agent_type = "Balanced"
-  )
-
-social_summary <- social %>% 
-  group_by(FaceID) %>% 
-  summarize(
-    First = mean(FirstRating),
-    Second = mean(SecondRating),
-    agent_type = "Socially-Influenced"
-  )
-
-plot_data <- bind_rows(self_summary, balanced_summary, social_summary) %>%
-  pivot_longer(c(First, Second),
-               names_to = "Type",
-               values_to = "Rating")
-
-#summarizing (means are different but similar... that said, most faces are about 4-5 trustworthy, i guess?)
-self %>% summarize(mean_first = mean(FirstRating),
-                   mean_second = mean(SecondRating))
-
-balanced %>% summarize(mean_first = mean(FirstRating),
-                       mean_second = mean(SecondRating))
-
-social %>% summarize(mean_first = mean(FirstRating),
-                     mean_second = mean(SecondRating))
 ```
+
+
 #plotting overall ratings (1st, 2nd)
 ```{r}
 ggplot(plot_data, aes(FaceID, Rating, color = interaction(agent_type, Type))) +
@@ -230,13 +246,14 @@ ggplot(plot_data, aes(FaceID, Rating, color = interaction(agent_type, Type))) +
   theme_minimal()+
   facet_wrap(~agent_type)
 ```
+#first and 2nd rating (should maybe fix the labs to be x-axis 1-8 in steps of 1)
 ```{r}
-self %>% mutate(agent_type = "Self-Focused") %>%
-  bind_rows(balanced %>% mutate(agent_type = "Balanced"),
-            social %>% mutate(agent_type = "Socially-Influenced")) %>%
-  pivot_longer(c(FirstRating, SecondRating),
-               names_to = "Type",
-               values_to = "Rating") %>%
+bind_rows(all_data$data, .id = "agent_type") %>%
+  pivot_longer(
+    cols = c(FirstRating, SecondRating),
+    names_to = "Type",
+    values_to = "Rating"
+  ) %>%
   ggplot(aes(Rating, fill = agent_type)) +
   geom_histogram(alpha = 0.4, bins = 20, position = "identity") +
   facet_grid(agent_type ~ Type) +
@@ -249,24 +266,17 @@ self %>% mutate(agent_type = "Self-Focused") %>%
 
 #plotting change from 1st to 2nd
 ```{r}
-self_change <- self %>%
-  group_by(FaceID) %>%
-  summarize(mean_change = mean(SecondRating - FirstRating),
-            agent_type = "Self-Focused")
-
-balanced_change <- balanced %>%
-  group_by(FaceID) %>%
-  summarize(mean_change = mean(SecondRating - FirstRating),
-            agent_type = "Balanced")
-
-social_change <- social %>%
-  group_by(FaceID) %>%
-  summarize(mean_change = mean(SecondRating - FirstRating),
-            agent_type = "Socially-Influenced")
-
-change_data <- bind_rows(self_change, balanced_change, social_change)
-
-change_data %>%
+all_data %>%
+  mutate(change = map(data, ~
+    .x %>%
+      group_by(FaceID) %>%
+      summarize(
+        mean_change = mean(SecondRating - FirstRating),
+        .groups = "drop"
+      )
+  )) %>%
+  select(agent_type, change) %>%
+  unnest(change) %>%
   group_by(agent_type) %>%
   group_split() %>%
   purrr::walk(function(df) {
@@ -288,7 +298,6 @@ change_data %>%
       geom_hline(
         yintercept = overall_mean,
         linetype = "dashed",
-        color = "black",
         linewidth = 0.7
       ) +
       scale_color_manual(values = c(
@@ -296,7 +305,7 @@ change_data %>%
         "Decreased Trust" = "#CD5C5C"
       )) +
       labs(
-        title = paste("Mean Change in Trust Ratings (First - Second):", unique(df$agent_type)),
+        title = paste("Mean Change in Trust Ratings:", unique(df$agent_type)),
         x = "Face ID",
         y = "Mean Change",
         color = "Trust Change"
@@ -306,12 +315,14 @@ change_data %>%
         axis.text.x = element_blank(),
         axis.ticks.x = element_blank()
       )
-
     print(p)
   })
+  
 
 #this does differ from the actual cogsci data (but i mean... that had a lot less samples?)
 #also, were likely not capturing some psychological effect (like reacting strongly to negative disagreement: i.e. group thinks someone is much less trustworthy than you, so you adjust due to caring more about negative feedback... or smth)
+
+#social people vote more extremely (look at max and min y-axis)
 ```
 
 
