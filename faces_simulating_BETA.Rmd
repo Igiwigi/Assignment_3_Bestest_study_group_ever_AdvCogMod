@@ -36,14 +36,21 @@ AFTERWARDS need to make the 2 models (WBA and SBA) and fit them to each of the 3
 betaFaceModel <- function(alpha_prior = 0.5, beta_prior = 0.5,
                           trust1, total1,
                           group_trust_mean, n_total_rating = 7,
-                          w_direct, w_social) {
+                          w_direct, w_social, 
+                          rho, kappa) {
   
-  # posterior update (structure taken basically from examples)
-  alpha_post <- alpha_prior + w_direct * trust1 +
-                               w_social * group_trust_mean
+  # adding rho into the function
+  effective_w_social <- w_social * rho
+  effective_w_direct <- w_direct * (1 - rho)
   
-  beta_post  <- beta_prior  + w_direct * (total1 - trust1) +
-                               w_social * (n_total_rating - group_trust_mean)
+  # posterior update (structure taken basically from examples) plus implemented kappa 
+  alpha_post <- alpha_prior + kappa * (effective_w_direct * trust1 +
+                                        effective_w_social * group_trust_mean)
+  
+  beta_post  <- beta_prior  + kappa * (effective_w_direct * (total1 - trust1) +
+                                        effective_w_social * (n_total_rating - group_trust_mean))
+
+
 
   expected_trust <- alpha_post / (alpha_post + beta_post)
   ci_lower       <- qbeta(0.025, alpha_post, beta_post)
@@ -62,12 +69,14 @@ betaFaceModel <- function(alpha_prior = 0.5, beta_prior = 0.5,
 agents <- tibble(
   agent_type    = c("Self-Focused", "Balanced", "Socially-Influenced"),
   weight_direct = c(1.5, 1.0, 0.5),
-  weight_social = c(0.5, 1.0, 2.0)
+  weight_social = c(0.5, 1.0, 2.0),
+  rho = c(0.75, 0.5, 0.2), #using same values as in the notebook, can alter if wrong
+  kappa = c(2.0, 2.0, 2.5) #again, using same ones as notebook, can change
 )
 
 #the actual script that combines the experimental design with the beta
 simulate_face_data_beta <- function(face_id, true_mean_face,
-                                     w_direct, w_social,
+                                     w_direct, w_social, rho, kappa, #added rho and kappa here
                                      n_participants = 1000,
                                      n_total_rating = 7) {
   
@@ -103,7 +112,9 @@ simulate_face_data_beta <- function(face_id, true_mean_face,
       group_trust_mean = group_trust_mean,
       n_total_rating = n_total_rating,
       w_direct = w_direct,
-      w_social = w_social
+      w_social = w_social,
+      rho = rho,
+      kappa = kappa #added row and kappa
     )
     
     # probability matching
@@ -145,8 +156,8 @@ generate_all_agents <- function(agents,
   # loop over agent types
   agents %>%
     mutate(data = pmap(
-      list(agent_type, weight_direct, weight_social),
-      function(agent_type, w_d, w_s) {
+      list(agent_type, weight_direct, weight_social, rho, kappa),
+      function(agent_type, w_d, w_s, rho, kappa) {
         
         df <- map_dfr(1:n_faces, function(f) {
           simulate_face_data_beta(
@@ -154,6 +165,8 @@ generate_all_agents <- function(agents,
             true_mean_face = face_params$true_mean_face[f],
             w_direct = w_d,
             w_social = w_s,
+            rho = rho,
+            kappa = kappa,
             n_participants = n_participants
           )
         })
