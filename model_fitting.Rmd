@@ -13,7 +13,7 @@ pacman::p_load(
   here, # Robust file paths
   ggplot2, #ggplot
   cmdstanr,
-  #loo,
+  loo,
   bayesplot, #Plotting MCMC
   furrr,        # Parallel processing
   future        # Future backend
@@ -29,19 +29,23 @@ theme_set(theme_classic())
 
 #now we fit the 2 models (WBA and SBA) and fit them to each dataset & then compare which model "best explains" which dataset (3 datasets: selfish, balanced, social)
 
+#trying to get this shit to work
+#note: SBA is just a WBA with specific parameters (rho and kappa), but it does exist as a separate model as well
+
 #not doing expansive param recovery etc. due to time constraints (just the bare minimum)
 
 ```{r}
+regenerate_simulations <-  FALSE #so it doesnt repeat what already exists
+
 make_stan_data <- function(df) {
   list(
     n                 = nrow(df),
-    trust1            = as.integer(df$FirstRating - 1L),
+    trust1            = as.integer(df$FirstRating - 1L), #just to fix it to the right space (its adjusted for plots in the simulating data)
     trust2            = as.integer(df$SecondRating - 1L),
-    group_trust_mean  = as.integer(round(df$GroupTrustMean)),
+    group_trust_mean = as.integer(round(df$GroupTrustMean)),
     n_total_rating    = 7L,
     prior_kappa_mu    = 2.0,
     prior_kappa_sigma = 1.0
-    #not doing rho and kappa directly now?
   )
 }
 
@@ -51,79 +55,101 @@ datasets <- list(
   socially_influenced = read_csv("data/socially_influenced_WBA_agent.csv")
 )
 
-sampler_args <- list(
-  chains          = 4,
-  parallel_chains = 4,
-  iter_warmup     = 1000,
-  iter_sampling   = 1000,
-  refresh         = 0
-)
-
 sba_model <- cmdstan_model("models/SBA_model2.stan")
 wba_model <- cmdstan_model("models/WBA_model2.stan")
 
-results <- map(datasets, function(df) {
+results <- map(names(datasets), function(dataset_name) { #does this for each dataset
+  
+  df <- datasets[[dataset_name]]
   d <- make_stan_data(df)
-  list(
-    sba = sba_model$sample(
-      data            = d,
-      fixed_param     = TRUE,
-      chains          = 1,
-      iter_warmup     = 0,     # fixed params need less?
-      iter_sampling   = 500,
-      refresh         = 0
-    ),
-    wba = wba_model$sample(
+  d_sba <- d[!names(d) %in% c("prior_kappa_mu", "prior_kappa_sigma")]
+  
+  # filenames
+  sba_file <- paste0("models/", dataset_name, "_sba_fit.rds")
+  wba_file <- paste0("models/", dataset_name, "_wba_fit.rds")
+  
+  # SBA
+  if (regenerate_simulations ||!file.exists(sba_file)) {
+    sba_fit <- sba_model$sample(
+      data          = d_sba,
+      fixed_param   = TRUE, #no freefloating params
+      chains        = 1,
+      iter_warmup   = 0,
+      iter_sampling = 500, #trying less iter
+      refresh       = 100
+    )
+    saveRDS(sba_fit, sba_file)
+    cat("SBA fit completed and saved to:", sba_file, "\n")
+  } else {
+    sba_fit <- readRDS(sba_file)
+    cat("Loaded existing SBA fit from:", sba_file, "\n")
+  }
+  
+  # WBA
+  if (regenerate_simulations || !file.exists(wba_file)) {
+    wba_fit <- wba_model$sample(
       data            = d,
       adapt_delta     = 0.95,
       chains          = 4,
       parallel_chains = 4,
       iter_warmup     = 1000,
       iter_sampling   = 1000,
-      refresh         = 0
+      refresh         = 200
     )
+    saveRDS(wba_fit, wba_file)
+    cat("WBA fit completed and saved to:", wba_file, "\n")
+  } else {
+    wba_fit <- readRDS(wba_file)
+    cat("Loaded existing WBA fit from:", wba_file, "\n")
+  }
+  
+  list(
+    sba = sba_fit,
+    wba = wba_fit
   )
 })
 
+names(results) <- names(datasets)
 
-# LOO comparison per dataset
+# LOO comparison per dataset (hopefully correct)
 loo_results <- map(results, function(r) {
-  loo_compare(
-    r$sba$loo(),
-    r$wba$loo()
-  )
+  
+  log_lik_wba <- r$wba$draws("log_lik", format = "matrix")
+  log_lik_sba <- r$sba$draws("log_lik", format = "matrix")
+  
+  if (ncol(log_lik_wba) > max_obs) {
+    keep <- sample(seq_len(ncol(log_lik_wba)), max_obs)
+    log_lik_wba <- log_lik_wba[, keep]
+    log_lik_sba <- log_lik_sba[, keep]
+  }
+  
+  # make sure values are valid
+  stopifnot(all(is.finite(log_lik_wba)))
+  stopifnot(all(is.finite(log_lik_sba)))
+  
+  # compute loo separately
+  loo_sba <- loo(log_lik_sba)
+  loo_wba <- loo(log_lik_wba)
+  
+  loo_compare(loo_sba, loo_wba)
 })
-print(loo_results)
 ```
+
+
+
 ```{r}
 #quick so can get this out on time (no indepth param recovery on this, just checking the sampling fit summary)
 check_sampling <- function(fit, model_name, dataset_name) {
   cat("\n======", model_name, "on", dataset_name, "======\n")
   
-  # 1. Rhat & effective sample size
-  print(summary(fit)$summary[, c("mean", "sd", "n_eff", "Rhat")])
+  print(fit$summary())
+  fit$diagnostic_summary()  # prints divergences, treedepth, ebfmi automatically
   
-  # 2. Divergences
-  sampler_params <- get_sampler_params(fit, inc_warmup = FALSE)
-  divergences <- sum(sapply(sampler_params, function(x) sum(x[, "divergent__"])))
-  cat("Divergent transitions:", divergences, "\n")
-  
-  # 3. Tree depth
-  treedepths <- sum(sapply(sampler_params, function(x) sum(x[, "treedepth__"] >= 10)))
-  cat("Max treedepth hits:", treedepths, "\n")
-  
-  # 4. Trace plots (to get visually)
-  posterior <- as.array(fit)
-  if (dim(posterior)[3] > 1) {  # skip if no freeparams (SBA)
-    mcmc_trace(posterior, pars = c("w_direct", "w_social", "rho", "kappa")) +
-      ggtitle(paste(model_name, "-", dataset_name))
+  # trace plots (skip SBA since no free params)
+  if (!is.null(tryCatch(fit$draws(c("rho", "kappa")), error = function(e) NULL))) {
+    print(mcmc_trace(fit$draws(c("rho", "kappa"))) +
+      ggtitle(paste(model_name, "-", dataset_name)))
   }
 }
-
-# run on all fits
-iwalk(results, function(r, dataset_name) {
-  check_sampling(r$sba, "SBA", dataset_name)
-  check_sampling(r$wba, "WBA", dataset_name)
-})
 ```
 

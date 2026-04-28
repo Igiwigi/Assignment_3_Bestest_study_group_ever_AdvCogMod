@@ -331,4 +331,9 @@ all_data %>%
 ```
 
 
+```{r}
+range(all_df$GroupTrustMean)
+range(all_df$FirstRating)
+range(all_df$SecondRating)
+```
 

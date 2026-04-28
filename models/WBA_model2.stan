@@ -15,7 +15,7 @@ data {
 parameters {
   // rho and kappa do what w_direct and w_social do?
   real<lower=0, upper=1> rho;
-  real<lower=0>          kappa;
+  real<lower=0, upper=20> kappa; //AFRAID of kappa blowing up somehow
 }
 
 transformed parameters {
