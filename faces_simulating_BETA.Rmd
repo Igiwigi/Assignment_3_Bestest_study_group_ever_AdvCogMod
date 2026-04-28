@@ -35,20 +35,18 @@ AFTERWARDS need to make the 2 models (WBA and SBA) and fit them to each of the 3
 # treating the ratings as counts (hopefully its right? it still hasnt been made into ratios as per 9th lecture)
 betaFaceModel <- function(alpha_prior = 0.5, beta_prior = 0.5,
                           trust1, total1,
-                          group_trust_mean, n_total_rating = 7,
-                          w_direct, w_social, 
+                          group_trust_mean, n_total_rating = 7, 
                           rho, kappa) {
   
-  # adding rho into the function
-  effective_w_social <- w_social * rho
-  effective_w_direct <- w_direct * (1 - rho)
+  # adding rho into the function & REMOVING W_SOCIAL AND W_DIRECT!!! (is this correct?)
+  #effective_w_social <- w_social * rho
+  #effective_w_direct <- w_direct * (1 - rho)
   
   # posterior update (structure taken basically from examples) plus implemented kappa 
-  alpha_post <- alpha_prior + kappa * (effective_w_direct * trust1 +
-                                        effective_w_social * group_trust_mean)
-  
-  beta_post  <- beta_prior  + kappa * (effective_w_direct * (total1 - trust1) +
-                                        effective_w_social * (n_total_rating - group_trust_mean))
+  alpha_post <- alpha_prior + kappa * ((1 - rho) * trust1 +
+                                      rho * group_trust_mean)
+  beta_post  <- beta_prior  + kappa * ((1 - rho) * (total1 - trust1) +
+                                      rho * (n_total_rating - group_trust_mean))
 
 
 
@@ -65,13 +63,11 @@ betaFaceModel <- function(alpha_prior = 0.5, beta_prior = 0.5,
   )
 }
 
-#the 3 agents!!!!! (note, here they dont sum up to 1) (havent added rho or kappa yet)
+#the 3 agents!!!!! (note, here they dont sum up to 1)
 agents <- tibble(
-  agent_type    = c("Self-Focused", "Balanced", "Socially-Influenced"),
-  weight_direct = c(1.5, 1.0, 0.5),
-  weight_social = c(0.5, 1.0, 2.0),
-  rho = c(0.75, 0.5, 0.2), #using same values as in the notebook, can alter if wrong
-  kappa = c(2.0, 2.0, 2.5) #again, using same ones as notebook, can change
+  agent_type = c("Self-Focused", "Balanced", "Socially-Influenced"),
+  rho        = c(0.2, 0.5, 0.8),  # directly encodes the balance
+  kappa      = c(2.0, 2.0, 2.5)
 )
 
 #the actual script that combines the experimental design with the beta
@@ -111,8 +107,6 @@ simulate_face_data_beta <- function(face_id, true_mean_face,
       total1 = n_total_rating,
       group_trust_mean = group_trust_mean,
       n_total_rating = n_total_rating,
-      w_direct = w_direct,
-      w_social = w_social,
       rho = rho,
       kappa = kappa #added row and kappa
     )
@@ -156,15 +150,13 @@ generate_all_agents <- function(agents,
   # loop over agent types
   agents %>%
     mutate(data = pmap(
-      list(agent_type, weight_direct, weight_social, rho, kappa),
-      function(agent_type, w_d, w_s, rho, kappa) {
+      list(agent_type, rho, kappa),
+      function(agent_type, rho, kappa) {
         
         df <- map_dfr(1:n_faces, function(f) {
           simulate_face_data_beta(
             face_id = f,
             true_mean_face = face_params$true_mean_face[f],
-            w_direct = w_d,
-            w_social = w_s,
             rho = rho,
             kappa = kappa,
             n_participants = n_participants

@@ -6,13 +6,124 @@ date: "2026-04-28"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(
+  tidyverse, # Data manipulation and plotting
+  dplyr,
+  here, # Robust file paths
+  ggplot2, #ggplot
+  cmdstanr,
+  #loo,
+  bayesplot, #Plotting MCMC
+  furrr,        # Parallel processing
+  future        # Future backend
+)
+
+# Parallel Setup: Leave 2 cores free for system stability
+n_cores <- parallel::detectCores() - 2
+plan(multisession, workers = n_cores)
+
+# Optional: Set a default ggplot theme
+theme_set(theme_classic())
 ```
 
-#now we fit the 2 models (WBA and SBA) and fit them to each dataset & then compare which one "best explains" which (3 datasets:  selfish, balanced, social)
+#now we fit the 2 models (WBA and SBA) and fit them to each dataset & then compare which model "best explains" which dataset (3 datasets: selfish, balanced, social)
 
-The Simple Bayesian Agent (SBA)
-The Weighted Bayesian Agent (WBA)
+#not doing expansive param recovery etc. due to time constraints (just the bare minimum)
+
 ```{r}
+make_stan_data <- function(df) {
+  list(
+    n                 = nrow(df),
+    trust1            = as.integer(df$FirstRating - 1L),
+    trust2            = as.integer(df$SecondRating - 1L),
+    group_trust_mean  = as.integer(round(df$GroupTrustMean)),
+    n_total_rating    = 7L,
+    prior_kappa_mu    = 2.0,
+    prior_kappa_sigma = 1.0
+    #not doing rho and kappa directly now?
+  )
+}
 
+datasets <- list(
+  self_focused        = read_csv("data/self_focused_WBA_agent.csv"),
+  balanced            = read_csv("data/SBA_agent.csv"),
+  socially_influenced = read_csv("data/socially_influenced_WBA_agent.csv")
+)
+
+sampler_args <- list(
+  chains          = 4,
+  parallel_chains = 4,
+  iter_warmup     = 1000,
+  iter_sampling   = 1000,
+  refresh         = 0
+)
+
+sba_model <- cmdstan_model("models/SBA_model2.stan")
+wba_model <- cmdstan_model("models/WBA_model2.stan")
+
+results <- map(datasets, function(df) {
+  d <- make_stan_data(df)
+  list(
+    sba = sba_model$sample(
+      data            = d,
+      fixed_param     = TRUE,
+      chains          = 1,
+      iter_warmup     = 0,     # fixed params need less?
+      iter_sampling   = 500,
+      refresh         = 0
+    ),
+    wba = wba_model$sample(
+      data            = d,
+      adapt_delta     = 0.95,
+      chains          = 4,
+      parallel_chains = 4,
+      iter_warmup     = 1000,
+      iter_sampling   = 1000,
+      refresh         = 0
+    )
+  )
+})
+
+
+# LOO comparison per dataset
+loo_results <- map(results, function(r) {
+  loo_compare(
+    r$sba$loo(),
+    r$wba$loo()
+  )
+})
+print(loo_results)
+```
+```{r}
+#quick so can get this out on time (no indepth param recovery on this, just checking the sampling fit summary)
+check_sampling <- function(fit, model_name, dataset_name) {
+  cat("\n======", model_name, "on", dataset_name, "======\n")
+  
+  # 1. Rhat & effective sample size
+  print(summary(fit)$summary[, c("mean", "sd", "n_eff", "Rhat")])
+  
+  # 2. Divergences
+  sampler_params <- get_sampler_params(fit, inc_warmup = FALSE)
+  divergences <- sum(sapply(sampler_params, function(x) sum(x[, "divergent__"])))
+  cat("Divergent transitions:", divergences, "\n")
+  
+  # 3. Tree depth
+  treedepths <- sum(sapply(sampler_params, function(x) sum(x[, "treedepth__"] >= 10)))
+  cat("Max treedepth hits:", treedepths, "\n")
+  
+  # 4. Trace plots (to get visually)
+  posterior <- as.array(fit)
+  if (dim(posterior)[3] > 1) {  # skip if no freeparams (SBA)
+    mcmc_trace(posterior, pars = c("w_direct", "w_social", "rho", "kappa")) +
+      ggtitle(paste(model_name, "-", dataset_name))
+  }
+}
+
+# run on all fits
+iwalk(results, function(r, dataset_name) {
+  check_sampling(r$sba, "SBA", dataset_name)
+  check_sampling(r$wba, "WBA", dataset_name)
+})
 ```
 
