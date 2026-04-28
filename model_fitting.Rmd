@@ -3,6 +3,7 @@ title: "model_fitting"
 output: html_document
 date: "2026-04-28"
 ---
+#now we fit the 2 models (WBA and SBA) to each dataset & then compare which model "best explains" which dataset (3 datasets: selfish, balanced, social)
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -14,124 +15,153 @@ pacman::p_load(
   ggplot2, #ggplot
   cmdstanr,
   loo,
-  bayesplot, #Plotting MCMC
-  furrr,        # Parallel processing
-  future        # Future backend
+  bayesplot #Plotting MCMC
 )
 
 # Parallel Setup: Leave 2 cores free for system stability
 n_cores <- parallel::detectCores() - 2
-plan(multisession, workers = n_cores)
 
 # Optional: Set a default ggplot theme
 theme_set(theme_classic())
 ```
 
-#now we fit the 2 models (WBA and SBA) and fit them to each dataset & then compare which model "best explains" which dataset (3 datasets: selfish, balanced, social)
+#not doing expansive param recovery etc. due to time constraints (just the bare minimum)
+# (also param recovery would probably be hampered by the model & data logic differing on the group mean trustworthiness value? -- fixed mean vs adaptive mean. can't really bother to fix that right now, could be an issue technically?)
 
-#trying to get this shit to work
 #note: SBA is just a WBA with specific parameters (rho and kappa), but it does exist as a separate model as well
 
-#not doing expansive param recovery etc. due to time constraints (just the bare minimum)
+#the files are uploaded separately (google drive for now) as theyre quite large (gigs): too lazy to set up gitLFS right now
 
 ```{r}
-regenerate_simulations <-  FALSE #so it doesnt repeat what already exists
+#to force it to overwrite (regen) simulations
+regenerate_simulations_SBA <-  FALSE 
+regenerate_simulations_WBA <-  FALSE
 
+#1. SETTING THE STAN DATA
 make_stan_data <- function(df) {
   list(
     n                 = nrow(df),
-    trust1            = as.integer(df$FirstRating - 1L), #just to fix it to the right space (its adjusted for plots in the simulating data, 1-8 originally)
+    trust1            = as.integer(df$FirstRating - 1L), #just to fix it to the right space (its adjusted for plots in the simulating data, 1-8 originally) --> recheck if this works ok (it should be fine?)
     trust2            = as.integer(df$SecondRating - 1L),
-    group_trust_mean = as.integer(round(df$GroupTrustMean)),
+    group_trust_mean = as.integer(round(df$GroupTrustMean)), #this should be correct and not need -1L (recheck later though)
     n_total_rating    = 7L,
     prior_kappa_mu    = 2.0,
     prior_kappa_sigma = 1.0
-  )
+  ) #am i doing this correctly? are these all the priors we should set, or? (alpha and beta priors are hardcoded 0.5 in the models)
 }
 
 datasets <- list(
-  self_focused        = read_csv("data/self_focused_WBA_agent.csv"),
-  balanced            = read_csv("data/SBA_agent.csv"),
-  socially_influenced = read_csv("data/socially_influenced_WBA_agent.csv")
+  self_focused        = read_csv(here("data/self_focused_WBA_agent.csv")),
+  balanced            = read_csv(here("data/SBA_agent.csv")),
+  socially_influenced = read_csv(here("data/socially_influenced_WBA_agent.csv"))
 )
 
-sba_model <- cmdstan_model("models/SBA_model2.stan")
-wba_model <- cmdstan_model("models/WBA_model2.stan")
+sba_model <- cmdstan_model(here("models/SBA_model2.stan"))
+wba_model <- cmdstan_model(here("models/WBA_model2.stan"))
 
-results <- map(names(datasets), function(dataset_name) { #does this for each dataset
+dir.create(here("models/fits"), recursive = TRUE, showWarnings = FALSE)
+
+#2. FITTING MODELS
+results <- map(names(datasets), function(dataset_name) {
   
   df <- datasets[[dataset_name]]
   d <- make_stan_data(df)
-  d_sba <- d[!names(d) %in% c("prior_kappa_mu", "prior_kappa_sigma")]
+  d_sba <- d[!names(d) %in% c("prior_kappa_mu", "prior_kappa_sigma")] #doesnt use any of these in the model
   
   # filenames
-  sba_file <- paste0("models/", dataset_name, "_sba_fit.rds")
-  wba_file <- paste0("models/", dataset_name, "_wba_fit.rds")
+  sba_file <- here("models/fits", paste0(dataset_name, "_sba_fit.rds"))
+  wba_file <- here("models/fits", paste0(dataset_name, "_wba_fit.rds"))
   
-  # SBA
-  if (regenerate_simulations ||!file.exists(sba_file)) {
+  # SBA (though its effectively a type of WBA)
+  if (regenerate_simulations_SBA ||!file.exists(sba_file)) {
     sba_fit <- sba_model$sample(
       data          = d_sba, #to omit the data it doesnt need
-      fixed_param   = TRUE, #no freefloating params
-      chains        = 1,
-      iter_warmup   = 0,
-      iter_sampling = 500, #trying less iter for SBA (maybe needs less, maybe should do more)
-      refresh       = 100
-    )
-    saveRDS(sba_fit, sba_file)
-    cat("SBA fit completed and saved to:", sba_file, "\n")
+      fixed_param   = TRUE, #no freefloating params (so no warmup either)
+      chains        = 2,
+      parallel_chains = min(2, n_cores),  #low to save time
+      iter_sampling = 1000,
+      refresh       = 100,
+      seed = 123
+      )
+    t1 <- Sys.time()
+    #saveRDS(sba_fit, sba_file) #quicker, but flushes the temp files when you close R
+    sba_fit$save_object(sba_file) #slow but thorough (& files take up a lot of space)
+    cat("WBA fit saved to:", sba_file, "\n")
+    cat("Save time:", difftime(Sys.time(), t1, units = "secs"), "s\n")
   } else {
     sba_fit <- readRDS(sba_file)
     cat("Loaded existing SBA fit from:", sba_file, "\n")
   }
   
   # WBA
-  if (regenerate_simulations || !file.exists(wba_file)) {
+  if (regenerate_simulations_WBA || !file.exists(wba_file)) {
     wba_fit <- wba_model$sample(
       data            = d,
-      adapt_delta     = 0.95,
-      chains          = 4,
-      parallel_chains = 4,
-      iter_warmup     = 500,
-      iter_sampling   = 500, #this takes a while (TRYING with less)
-      refresh         = 100
-    )
-    saveRDS(wba_fit, wba_file)
-    cat("WBA fit completed and saved to:", wba_file, "\n")
+      chains          = 2, #to save time 
+      parallel_chains = min(2, n_cores), #low to save time
+      iter_warmup     = 500, #warmups are slightly lower than 50/50 but still takes forever...
+      iter_sampling   = 1000, #this takes a while, should have done less (could be a model issue?)
+      refresh         = 100,
+      seed = 123
+      )
+    t1 <- Sys.time()
+    #saveRDS(wba_fit, wba_file) #is flushed once R is closed
+    wba_fit$save_object(wba_file) 
+    cat("WBA fit saved to:", wba_file, "\n")
+    cat("Save time:", difftime(Sys.time(), t1, units = "secs"), "s\n")
   } else {
     wba_fit <- readRDS(wba_file)
     cat("Loaded existing WBA fit from:", wba_file, "\n")
   }
   
   list(
-    sba = sba_fit,
-    wba = wba_fit
-  )
+  sba_dir = sba_dir,
+  wba_dir = wba_dir
+)
+  
+})
+names(results) <- names(datasets)
+```
+
+
+```{r}
+#3. CHECKING DIAGNOSTICS (WBA)
+check_diagnostics <- function(fit, label) {
+  diag_smry <- fit$diagnostic_summary()
+  min_ebfmi <- suppressWarnings(min(diag_smry$ebfmi, na.rm = TRUE))
+
+  smry <- fit$summary() |> filter(!is.na(rhat))
+  n_fail <- smry |> filter(rhat > 1.01 | ess_bulk < 400 | ess_tail < 400) |> nrow()
+
+  cat(sprintf("%-25s | Divs: %3d | Min E-BFMI: %.2f | Failures: %d\n",
+              label,
+              sum(diag_smry$num_divergent),
+              min_ebfmi,
+              n_fail))
+}
+
+cat("\n=== WBA Diagnostics ===\n")
+imap(results, function(r, name) {
+  check_diagnostics(r$wba, paste0("WBA_", name))
 })
 
-names(results) <- names(datasets)
+#4. LOO COMPARISON PER DATASET (hopefully correct)
+loo_results <- imap(results, function(r, dataset_name) {
 
-# LOO comparison per dataset (hopefully correct)
-loo_results <- map(results, function(r) {
-  
   log_lik_wba <- r$wba$draws("log_lik", format = "matrix")
   log_lik_sba <- r$sba$draws("log_lik", format = "matrix")
-  
-  if (ncol(log_lik_wba) > max_obs) {
-    keep <- sample(seq_len(ncol(log_lik_wba)), max_obs)
-    log_lik_wba <- log_lik_wba[, keep]
-    log_lik_sba <- log_lik_sba[, keep]
-  }
-  
-  # make sure values are valid
+
+  stopifnot(ncol(log_lik_wba) == ncol(log_lik_sba))
   stopifnot(all(is.finite(log_lik_wba)))
   stopifnot(all(is.finite(log_lik_sba)))
-  
-  # compute loo separately
-  loo_sba <- loo(log_lik_sba)
+
   loo_wba <- loo(log_lik_wba)
-  
-  loo_compare(loo_sba, loo_wba)
+  loo_sba <- loo(log_lik_sba)
+
+  comparison <- loo_compare(list(WBA = loo_wba, SBA = loo_sba))
+  cat("\n=== LOO Comparison:", dataset_name, "===\n")
+  print(comparison)
+  comparison
 })
 ```
 
@@ -143,7 +173,7 @@ check_sampling <- function(fit, model_name, dataset_name) {
   cat("\n======", model_name, "on", dataset_name, "======\n")
   
   print(fit$summary())
-  fit$diagnostic_summary()  # prints divergences, treedepth, ebfmi automatically
+  print(fit$diagnostic_summary()) # prints divergences, treedepth, ebfmi
   
   # trace plots (skip SBA since no free params)
   if (!is.null(tryCatch(fit$draws(c("rho", "kappa")), error = function(e) NULL))) {
@@ -151,5 +181,10 @@ check_sampling <- function(fit, model_name, dataset_name) {
       ggtitle(paste(model_name, "-", dataset_name)))
   }
 }
+
+imap(results, function(r, name) {
+  check_sampling(r$wba, "WBA", name)
+  check_sampling(r$sba, "SBA", name)
+})
 ```
 

@@ -4,10 +4,12 @@ data {
   int<lower=1> n;
   array[n] int<lower=0, upper=7> trust1;
   array[n] int<lower=0, upper=7> trust2;
-  array[n] int<lower=0, upper=7> group_trust_mean;
-  int<lower=1> n_total_rating;  // pass 7 from R
+  array[n] int<lower=0, upper=7> group_trust_mean; //NOTE: there is a mismatch here! 
+  //group trust updates in our simulation, participant after participant, but here it assumes there's one "true" stable value
+  //ideally, would fix this by either making this one adaptive or by changing the data simulation logic
+  int<lower=1> n_total_rating;
 
-  // prior hyperparameters
+  // prior hyperparameters (set in the fitting logic)
   real<lower=0> prior_kappa_mu;
   real<lower=0> prior_kappa_sigma;
 }
@@ -15,11 +17,11 @@ data {
 parameters {
   // rho and kappa do what w_direct and w_social do?
   real<lower=0, upper=1> rho;
-  real<lower=0, upper=20> kappa; //AFRAID of kappa blowing up somehow
+  real<lower=0, upper=50> kappa; //AFRAID of kappa blowing up somehow (maybe unnecessary to cap it?) (could be an issue with how its modelled)
 }
 
 transformed parameters {
-  vector[n] alpha_post = 0.5 + kappa * (
+  vector[n] alpha_post = 0.5 + kappa * ( //priors are both hardcoded as 0.5
     (1 - rho) * to_vector(trust1) +
     rho        * to_vector(group_trust_mean)
   );
@@ -31,7 +33,7 @@ transformed parameters {
 
 model {
   rho   ~ beta(2, 2);
-  kappa ~ lognormal(log(prior_kappa_mu), prior_kappa_sigma);
+  kappa ~ lognormal(log(prior_kappa_mu), prior_kappa_sigma); //should be ok? but could be why kappa freaks out when not bounded
   target += beta_binomial_lpmf(trust2 | n_total_rating, alpha_post, beta_post);
 }
 

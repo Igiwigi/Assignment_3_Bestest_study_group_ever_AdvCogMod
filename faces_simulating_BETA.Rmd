@@ -156,7 +156,7 @@ generate_all_agents <- function(agents,
         df <- map_dfr(1:n_faces, function(f) {
           simulate_face_data_beta(
             face_id = f,
-            true_mean_face = face_params$true_mean_face[f],
+            true_mean_face = face_params$true_mean_face[f], #there might be an issue with how dynamic this is?
             rho = rho,
             kappa = kappa,
             n_participants = n_participants
