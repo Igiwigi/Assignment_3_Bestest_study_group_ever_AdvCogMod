@@ -40,7 +40,7 @@ regenerate_simulations <-  FALSE #so it doesnt repeat what already exists
 make_stan_data <- function(df) {
   list(
     n                 = nrow(df),
-    trust1            = as.integer(df$FirstRating - 1L), #just to fix it to the right space (its adjusted for plots in the simulating data)
+    trust1            = as.integer(df$FirstRating - 1L), #just to fix it to the right space (its adjusted for plots in the simulating data, 1-8 originally)
     trust2            = as.integer(df$SecondRating - 1L),
     group_trust_mean = as.integer(round(df$GroupTrustMean)),
     n_total_rating    = 7L,
@@ -71,11 +71,11 @@ results <- map(names(datasets), function(dataset_name) { #does this for each dat
   # SBA
   if (regenerate_simulations ||!file.exists(sba_file)) {
     sba_fit <- sba_model$sample(
-      data          = d_sba,
+      data          = d_sba, #to omit the data it doesnt need
       fixed_param   = TRUE, #no freefloating params
       chains        = 1,
       iter_warmup   = 0,
-      iter_sampling = 500, #trying less iter
+      iter_sampling = 500, #trying less iter for SBA (maybe needs less, maybe should do more)
       refresh       = 100
     )
     saveRDS(sba_fit, sba_file)
@@ -92,9 +92,9 @@ results <- map(names(datasets), function(dataset_name) { #does this for each dat
       adapt_delta     = 0.95,
       chains          = 4,
       parallel_chains = 4,
-      iter_warmup     = 1000,
-      iter_sampling   = 1000,
-      refresh         = 200
+      iter_warmup     = 500,
+      iter_sampling   = 500, #this takes a while (TRYING with less)
+      refresh         = 100
     )
     saveRDS(wba_fit, wba_file)
     cat("WBA fit completed and saved to:", wba_file, "\n")
