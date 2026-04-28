@@ -1,0 +1,11 @@
+---
+title: "model_fitting"
+output: html_document
+date: "2026-04-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#now we fit the 2 models (WBA and SBA) and fit them to each dataset & then compare which one "best explains" which (3 datasets:  selfish, balanced, social)
