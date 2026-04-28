@@ -114,10 +114,7 @@ results <- map(names(datasets), function(dataset_name) {
     cat("Loaded existing WBA fit from:", wba_file, "\n")
   }
   
-  list(
-  sba_dir = sba_dir,
-  wba_dir = wba_dir
-)
+  list(sba = sba_fit, wba = wba_fit)
   
 })
 names(results) <- names(datasets)
