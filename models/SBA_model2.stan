@@ -2,6 +2,9 @@
 
 // removed the weights in favor of kappa and rho i think?
 // this is equivalent to WBA with specific rho & kappa param (so kind of redundant)
+
+// currently blowing up (has high pareto-k) making weighing impossible
+
 data {
   int<lower=1> n;
   array[n] int<lower=0, upper=7> trust1;

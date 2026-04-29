@@ -38,25 +38,72 @@ check_diagnostics <- function(fit_slim, label) {
 }
 
 cat("\n=== WBA Diagnostics ===\n")
-imap(results, function(r, name) {
-  wba_slim <- readRDS(r$wba_file) #gotta load one at a time so RAM doesnt explode
-  check_diagnostics(wba_slim, paste0("WBA_", name))
-  rm(wba_slim)
-  gc()
-})
+invisible(
+  imap(results, function(r, name) {
+    wba_slim <- readRDS(r$wba_file)
+    check_diagnostics(wba_slim, paste0("WBA_", name))
+  })
+)
 
 #4. LOO COMPARISON PER DATASET (hopefully correct)
 loo_results <- imap(results, function(r, dataset_name) {
+  
   wba_slim <- readRDS(r$wba_file)
   sba_slim <- readRDS(r$sba_file)
 
-  comparison <- loo_compare(list(WBA = wba_slim$loo, SBA = sba_slim$loo))
+  # extract loo objects
+  wba_loo <- wba_slim$loo
+  sba_loo <- sba_slim$loo
 
-  cat("\n=== LOO Comparison:", dataset_name, "===\n")
+  # --- SAFETY CHECK: Pareto-k diagnostics ---
+  check_k <- function(loo_obj, name) {
+    k <- loo_obj$diagnostics$pareto_k
+    cat("\n", name, "Pareto-k summary:\n")
+    print(summary(k))
+    
+    if (any(k > 0.7, na.rm = TRUE)) {
+      warning(name, ": high Pareto-k detected → LOO may be unreliable")
+    }
+  }
+
+  cat("\n==============================\n")
+  cat("DATASET:", dataset_name, "\n")
+
+  check_k(wba_loo, "WBA")
+  check_k(sba_loo, "SBA")
+
+  # LOO comparison (safe)
+  comparison <- loo_compare(list(WBA = wba_loo,
+                                SBA = sba_loo))
+
+  cat("\n=== LOO Comparison ===\n")
   print(comparison)
 
-  rm(wba_slim, sba_slim)
-  gc()
-  comparison
+  # --- WEIGHTS (ONLY if safe) ---
+  w <- NULL
+
+  if (all(wba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE) &&
+      all(sba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE)) {
+
+    w <- loo_model_weights(list(WBA = wba_loo,
+                                SBA = sba_loo),
+                           method = "stacking")
+
+    cat("\n=== Model Weights (stacking) ===\n")
+    print(w$weights)
+
+  } else {
+    cat("\n⚠ Skipping weights: unstable PSIS (high Pareto-k)\n")
+  }
+
+  list(
+    comparison = comparison,
+    weights = w
+  )
 })
+
+#struggling with getting the weights unfortunately (for SBA) as its pareto k blows the fuck up
+#maybe a mistake somewhere in the process? SBA is fully deterministic (fixed=TRUE), or in the model specification?
+#we can assume itd weigh = 1 WBA for all of these... because SBA is misspecified somehow
 ```
+#model recovery

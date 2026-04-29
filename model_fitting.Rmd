@@ -67,7 +67,7 @@ save_fit_slim <- function(fit, file_path, fixed_param = FALSE) {
   slim <- list(
     diagnostic_summary = if (fixed_param) NULL else fit$diagnostic_summary(), # for divergences & E-BFMI
     summary            = if (fixed_param) NULL else fit$summary(),             # for rhat, ess_bulk, ess_tail
-    loo                = loo::loo(log_lik_matrix, cores = 2)                   # for LOO (available for both); should be quicker than old ver? is cores = 2 fine?
+    loo                = loo(fit$draws("log_lik", format = "matrix"))                # for LOO (available for both)
   )
   saveRDS(slim, file_path)
   rm(log_lik_matrix)
