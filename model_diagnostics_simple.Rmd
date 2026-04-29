@@ -1,0 +1,72 @@
+---
+title: "model_diagnostics_simple"
+output: html_document
+date: "2026-04-28"
+---
+#plotting the simple diagnostics
+#not doing expansive param recovery etc. due to time constraints (just the bare minimum)
+# (also param recovery would probably be hampered by the model & data logic differing on the group mean trustworthiness value? -- fixed mean vs adaptive mean. can't really bother to fix that right now, could be an issue technically?)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(
+  tidyverse, # Data manipulation and plotting
+  dplyr,
+  here, # Robust file paths
+  ggplot2, #ggplot
+  cmdstanr,
+  loo,
+  bayesplot #Plotting MCMC
+)
+#paths of the fits
+results <- readRDS(here("models/fits/results_paths.rds"))
+```
+
+```{r}
+#3. CHECKING DIAGNOSTICS (WBA)
+# slim saves are plain lists now, so we access fields with $ instead of calling methods
+check_diagnostics <- function(fit_slim, label) {
+  diag_smry <- fit_slim$diagnostic_summary        # already computed at save time, no method call needed
+  min_ebfmi <- suppressWarnings(min(diag_smry$ebfmi, na.rm = TRUE))
+  smry <- fit_slim$summary |> filter(!is.na(rhat))
+  n_fail <- smry |> filter(rhat > 1.01 | ess_bulk < 400 | ess_tail < 400) |> nrow()
+  cat(sprintf("%-25s | Divs: %3d | Min E-BFMI: %.2f | Failures: %d\n",
+              label,
+              sum(diag_smry$num_divergent),
+              min_ebfmi,
+              n_fail))
+}
+
+cat("\n=== WBA Diagnostics ===\n")
+imap(results, function(r, name) {
+  wba_slim <- readRDS(r$wba_file) #gotta load one at a time so RAM doesnt explode
+  check_diagnostics(wba_slim, paste0("WBA_", name))
+  rm(wba_slim)
+  gc()
+})
+
+#4. LOO COMPARISON PER DATASET (hopefully correct)
+loo_results <- imap(results, function(r, dataset_name) {
+  wba_slim <- readRDS(r$wba_file) #same idea here
+  sba_slim <- readRDS(r$sba_file)
+  
+  # log_lik is already a matrix in the slim save, no need to call draws()
+  log_lik_wba <- wba_slim$log_lik
+  log_lik_sba <- sba_slim$log_lik
+  
+  stopifnot(ncol(log_lik_wba) == ncol(log_lik_sba))
+  stopifnot(all(is.finite(log_lik_wba)))
+  stopifnot(all(is.finite(log_lik_sba)))
+  
+  loo_wba <- loo(log_lik_wba)
+  loo_sba <- loo(log_lik_sba)
+  comparison <- loo_compare(list(WBA = loo_wba, SBA = loo_sba))
+  
+  cat("\n=== LOO Comparison:", dataset_name, "===\n")
+  print(comparison)
+  
+  rm(wba_slim, sba_slim, log_lik_wba, log_lik_sba) #clean up after each dataset
+  gc()
+  comparison
+})
+```

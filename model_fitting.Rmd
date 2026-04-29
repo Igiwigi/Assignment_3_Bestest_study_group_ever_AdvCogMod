@@ -25,12 +25,10 @@ n_cores <- parallel::detectCores() - 2
 theme_set(theme_classic())
 ```
 
-#not doing expansive param recovery etc. due to time constraints (just the bare minimum)
-# (also param recovery would probably be hampered by the model & data logic differing on the group mean trustworthiness value? -- fixed mean vs adaptive mean. can't really bother to fix that right now, could be an issue technically?)
-
 #note: SBA is just a WBA with specific parameters (rho and kappa), but it does exist as a separate model as well
 
 #the files are uploaded separately (google drive for now) as theyre quite large (gigs): too lazy to set up gitLFS right now
+#this takes forever to run: am i doing it wrong?
 
 ```{r}
 #to force it to overwrite (regen) simulations
@@ -61,6 +59,16 @@ wba_model <- cmdstan_model(here("models/WBA_model2.stan"))
 
 dir.create(here("models/fits"), recursive = TRUE, showWarnings = FALSE)
 
+# Save only the minimum needed for diagnostics (i was saving full model fits...)
+save_fit_slim <- function(fit, file_path) {
+  slim <- list(
+    diagnostic_summary = fit$diagnostic_summary(), # for divergences & E-BFMI
+    summary            = fit$summary(),             # for rhat, ess_bulk, ess_tail
+    log_lik            = fit$draws("log_lik", format = "matrix") # for LOO
+  )
+  saveRDS(slim, file_path)
+}
+
 #2. FITTING MODELS
 results <- map(names(datasets), function(dataset_name) {
   
@@ -73,7 +81,7 @@ results <- map(names(datasets), function(dataset_name) {
   wba_file <- here("models/fits", paste0(dataset_name, "_wba_fit.rds"))
   
   # SBA (though its effectively a type of WBA)
-  if (regenerate_simulations_SBA ||!file.exists(sba_file)) {
+  if (regenerate_simulations_SBA || !file.exists(sba_file)) {
     sba_fit <- sba_model$sample(
       data          = d_sba, #to omit the data it doesnt need
       fixed_param   = TRUE, #no freefloating params (so no warmup either)
@@ -84,13 +92,16 @@ results <- map(names(datasets), function(dataset_name) {
       seed = 123
       )
     t1 <- Sys.time()
-    #saveRDS(sba_fit, sba_file) #quicker, but flushes the temp files when you close R
-    sba_fit$save_object(sba_file) #slow but thorough (& files take up a lot of space)
-    cat("WBA fit saved to:", sba_file, "\n")
+    save_fit_slim(sba_fit, sba_file) # slim save: diagnostic_summary + summary + log_lik only
+    cat("SBA fit saved to:", sba_file, "\n")
     cat("Save time:", difftime(Sys.time(), t1, units = "secs"), "s\n")
+    
+    #to avoid clogging RAM (it adds up)
+    rm(sba_fit)
+    gc()
+    
   } else {
-    sba_fit <- readRDS(sba_file)
-    cat("Loaded existing SBA fit from:", sba_file, "\n")
+    cat("Existing SBA fit found:", sba_file, "\n")
   }
   
   # WBA
@@ -105,83 +116,25 @@ results <- map(names(datasets), function(dataset_name) {
       seed = 123
       )
     t1 <- Sys.time()
-    #saveRDS(wba_fit, wba_file) #is flushed once R is closed
-    wba_fit$save_object(wba_file) 
+    save_fit_slim(wba_fit, wba_file) # slim save: diagnostic_summary + summary + log_lik only
     cat("WBA fit saved to:", wba_file, "\n")
     cat("Save time:", difftime(Sys.time(), t1, units = "secs"), "s\n")
+    
+    #to avoid clogging RAM (it adds up)
+    rm(wba_fit)
+    gc()
+    
   } else {
-    wba_fit <- readRDS(wba_file)
-    cat("Loaded existing WBA fit from:", wba_file, "\n")
+    cat("Existing WBA fit found:", wba_file, "\n")
   }
   
-  list(sba = sba_fit, wba = wba_fit)
+  #just save filepaths for later to avoid keeping them in mem
+  list(
+    sba_file = sba_file,
+    wba_file = wba_file
+  )
   
 })
 names(results) <- names(datasets)
+saveRDS(results, here("models/fits/results_paths.rds")) #this is specific to my path though
 ```
-
-
-```{r}
-#3. CHECKING DIAGNOSTICS (WBA)
-check_diagnostics <- function(fit, label) {
-  diag_smry <- fit$diagnostic_summary()
-  min_ebfmi <- suppressWarnings(min(diag_smry$ebfmi, na.rm = TRUE))
-
-  smry <- fit$summary() |> filter(!is.na(rhat))
-  n_fail <- smry |> filter(rhat > 1.01 | ess_bulk < 400 | ess_tail < 400) |> nrow()
-
-  cat(sprintf("%-25s | Divs: %3d | Min E-BFMI: %.2f | Failures: %d\n",
-              label,
-              sum(diag_smry$num_divergent),
-              min_ebfmi,
-              n_fail))
-}
-
-cat("\n=== WBA Diagnostics ===\n")
-imap(results, function(r, name) {
-  check_diagnostics(r$wba, paste0("WBA_", name))
-})
-
-#4. LOO COMPARISON PER DATASET (hopefully correct)
-loo_results <- imap(results, function(r, dataset_name) {
-
-  log_lik_wba <- r$wba$draws("log_lik", format = "matrix")
-  log_lik_sba <- r$sba$draws("log_lik", format = "matrix")
-
-  stopifnot(ncol(log_lik_wba) == ncol(log_lik_sba))
-  stopifnot(all(is.finite(log_lik_wba)))
-  stopifnot(all(is.finite(log_lik_sba)))
-
-  loo_wba <- loo(log_lik_wba)
-  loo_sba <- loo(log_lik_sba)
-
-  comparison <- loo_compare(list(WBA = loo_wba, SBA = loo_sba))
-  cat("\n=== LOO Comparison:", dataset_name, "===\n")
-  print(comparison)
-  comparison
-})
-```
-
-
-
-```{r}
-#quick so can get this out on time (no indepth param recovery on this, just checking the sampling fit summary)
-check_sampling <- function(fit, model_name, dataset_name) {
-  cat("\n======", model_name, "on", dataset_name, "======\n")
-  
-  print(fit$summary())
-  print(fit$diagnostic_summary()) # prints divergences, treedepth, ebfmi
-  
-  # trace plots (skip SBA since no free params)
-  if (!is.null(tryCatch(fit$draws(c("rho", "kappa")), error = function(e) NULL))) {
-    print(mcmc_trace(fit$draws(c("rho", "kappa"))) +
-      ggtitle(paste(model_name, "-", dataset_name)))
-  }
-}
-
-imap(results, function(r, name) {
-  check_sampling(r$wba, "WBA", name)
-  check_sampling(r$sba, "SBA", name)
-})
-```
-
