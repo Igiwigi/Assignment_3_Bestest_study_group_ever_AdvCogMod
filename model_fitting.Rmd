@@ -60,11 +60,11 @@ wba_model <- cmdstan_model(here("models/WBA_model2.stan"))
 dir.create(here("models/fits"), recursive = TRUE, showWarnings = FALSE)
 
 # Save only the minimum needed for diagnostics (i was saving full model fits...)
-save_fit_slim <- function(fit, file_path) {
+save_fit_slim <- function(fit, file_path, fixed_param = FALSE) {
   slim <- list(
-    diagnostic_summary = fit$diagnostic_summary(), # for divergences & E-BFMI
-    summary            = fit$summary(),             # for rhat, ess_bulk, ess_tail
-    log_lik            = fit$draws("log_lik", format = "matrix") # for LOO
+    diagnostic_summary = if (fixed_param) NULL else fit$diagnostic_summary(), # for divergences & E-BFMI
+    summary            = if (fixed_param) NULL else fit$summary(),             # for rhat, ess_bulk, ess_tail
+    log_lik            = fit$draws("log_lik", format = "matrix")               # for LOO (available for both)
   )
   saveRDS(slim, file_path)
 }
@@ -92,7 +92,7 @@ results <- map(names(datasets), function(dataset_name) {
       seed = 123
       )
     t1 <- Sys.time()
-    save_fit_slim(sba_fit, sba_file) # slim save: diagnostic_summary + summary + log_lik only
+    save_fit_slim(sba_fit, sba_file, fixed_param = TRUE) # slim save: diagnostic_summary + summary + log_lik only
     cat("SBA fit saved to:", sba_file, "\n")
     cat("Save time:", difftime(Sys.time(), t1, units = "secs"), "s\n")
     
