@@ -47,25 +47,15 @@ imap(results, function(r, name) {
 
 #4. LOO COMPARISON PER DATASET (hopefully correct)
 loo_results <- imap(results, function(r, dataset_name) {
-  wba_slim <- readRDS(r$wba_file) #same idea here
+  wba_slim <- readRDS(r$wba_file)
   sba_slim <- readRDS(r$sba_file)
-  
-  # log_lik is already a matrix in the slim save, no need to call draws()
-  log_lik_wba <- wba_slim$log_lik
-  log_lik_sba <- sba_slim$log_lik
-  
-  stopifnot(ncol(log_lik_wba) == ncol(log_lik_sba))
-  stopifnot(all(is.finite(log_lik_wba)))
-  stopifnot(all(is.finite(log_lik_sba)))
-  
-  loo_wba <- loo(log_lik_wba)
-  loo_sba <- loo(log_lik_sba)
-  comparison <- loo_compare(list(WBA = loo_wba, SBA = loo_sba))
-  
+
+  comparison <- loo_compare(list(WBA = wba_slim$loo, SBA = sba_slim$loo))
+
   cat("\n=== LOO Comparison:", dataset_name, "===\n")
   print(comparison)
-  
-  rm(wba_slim, sba_slim, log_lik_wba, log_lik_sba) #clean up after each dataset
+
+  rm(wba_slim, sba_slim)
   gc()
   comparison
 })

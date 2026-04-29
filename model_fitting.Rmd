@@ -5,6 +5,8 @@ date: "2026-04-28"
 ---
 #now we fit the 2 models (WBA and SBA) to each dataset & then compare which model "best explains" which dataset (3 datasets: selfish, balanced, social)
 
+#pareto k are high for SBA
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
@@ -45,13 +47,13 @@ make_stan_data <- function(df) {
     n_total_rating    = 7L,
     prior_kappa_mu    = 2.0,
     prior_kappa_sigma = 1.0
-  ) #am i doing this correctly? are these all the priors we should set, or? (alpha and beta priors are hardcoded 0.5 in the models)
+  ) #(alpha and beta priors are hardcoded 0.5 in the models: jeffers priors)
 }
 
 datasets <- list(
-  self_focused        = read_csv(here("data/self_focused_WBA_agent.csv")),
-  balanced            = read_csv(here("data/SBA_agent.csv")),
-  socially_influenced = read_csv(here("data/socially_influenced_WBA_agent.csv"))
+  self_focused        = read_csv(here("data/self_focused_WBA_agent.csv"), n_max=25000), #ONLY take first 25k out of 80k (maybe still too much)
+  balanced            = read_csv(here("data/SBA_agent.csv"), n_max=25000),
+  socially_influenced = read_csv(here("data/socially_influenced_WBA_agent.csv"), n_max=25000)
 )
 
 sba_model <- cmdstan_model(here("models/SBA_model2.stan"))
@@ -61,12 +63,15 @@ dir.create(here("models/fits"), recursive = TRUE, showWarnings = FALSE)
 
 # Save only the minimum needed for diagnostics (i was saving full model fits...)
 save_fit_slim <- function(fit, file_path, fixed_param = FALSE) {
+  log_lik_matrix <- fit$draws("log_lik", format = "matrix") #think this slows down saving considerably
   slim <- list(
     diagnostic_summary = if (fixed_param) NULL else fit$diagnostic_summary(), # for divergences & E-BFMI
     summary            = if (fixed_param) NULL else fit$summary(),             # for rhat, ess_bulk, ess_tail
-    log_lik            = fit$draws("log_lik", format = "matrix")               # for LOO (available for both)
+    loo                = loo::loo(log_lik_matrix, cores = 2)                   # for LOO (available for both); should be quicker than old ver? is cores = 2 fine?
   )
   saveRDS(slim, file_path)
+  rm(log_lik_matrix)
+  gc()
 }
 
 #2. FITTING MODELS
@@ -86,7 +91,7 @@ results <- map(names(datasets), function(dataset_name) {
       data          = d_sba, #to omit the data it doesnt need
       fixed_param   = TRUE, #no freefloating params (so no warmup either)
       chains        = 2,
-      parallel_chains = min(2, n_cores),  #low to save time
+      parallel_chains = min(2, n_cores),  #low to save time; kinda redundant to use min
       iter_sampling = 1000,
       refresh       = 100,
       seed = 123
@@ -108,8 +113,8 @@ results <- map(names(datasets), function(dataset_name) {
   if (regenerate_simulations_WBA || !file.exists(wba_file)) {
     wba_fit <- wba_model$sample(
       data            = d,
-      chains          = 2, #to save time 
-      parallel_chains = min(2, n_cores), #low to save time
+      chains          = 4, #should be an ok amount of chains 
+      parallel_chains = min(4, n_cores), #kinda redundant using min
       iter_warmup     = 500, #warmups are slightly lower than 50/50 but still takes forever...
       iter_sampling   = 1000, #this takes a while, should have done less (could be a model issue?)
       refresh         = 100,
