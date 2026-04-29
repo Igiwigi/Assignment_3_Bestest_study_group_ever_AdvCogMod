@@ -35,7 +35,7 @@ AFTERWARDS need to make the 2 models (WBA and SBA) and fit them to each of the 3
 # treating the ratings as counts (hopefully its right? it still hasnt been made into ratios as per 9th lecture)
 betaFaceModel <- function(alpha_prior = 0.5, beta_prior = 0.5,
                           trust1, total1,
-                          group_trust_mean, n_total_rating = 7, 
+                          group_trust_mean, n_total_rating = 8, 
                           rho, kappa) {
   
   # adding rho into the function & REMOVING W_SOCIAL AND W_DIRECT!!! (is this correct?)
@@ -72,36 +72,34 @@ agents <- tibble(
 
 #the actual script that combines the experimental design with the beta
 simulate_face_data_beta <- function(face_id, true_mean_face,
-                                     w_direct, w_social, rho, kappa, #added rho and kappa here
+                                     w_direct, w_social, rho, kappa,
                                      n_participants = 1000,
-                                     n_total_rating = 7) {
+                                     n_total_rating = 8,
+                                     static_group_trust = NULL) {  # trying to test it with static
   
   first_ratings  <- numeric(n_participants)
   second_ratings <- numeric(n_participants)
   group_trust_means <- numeric(n_participants)
   feedback_vec   <- numeric(n_participants)
   
+  # setting the group trust once at the beginning
+  if (is.null(static_group_trust)) {
+    static_group_trust <- round(runif(1, 0, 7))  
+  }
+  
   for (p in 1:n_participants) {
     
-    # FIRST RATING (own perceptual evidence)
-    # (multiple steps to fix a NA issue)
+    # FIRST RATING
     prob <- true_mean_face / n_total_rating
     prob <- max(0, min(1, prob))
     first <- rbinom(1, 7, prob)
-    # print(first)
     
-    # GROUP MEAN (social info)
-    if (p == 1) {
-      group_trust_mean <- first
-      feedback   <- 0 #no feedback for first rating
-    } else {
-      group_trust_mean <- round(mean(first_ratings[1:(p-1)])) #mean rating of everyone but you... so far (running average) (order matters)
-      group_trust_mean <- max(0, min(n_total_rating, group_trust_mean))
-      feedback   <- round(group_trust_mean - first) #feedback is the difference
-      feedback   <- max(-3, min(3, feedback)) #feedback can only be -3 to 3
-    }
+    # GROUP MEAN - STATIC VERSION
+    group_trust_mean <- static_group_trust  
+    feedback <- round(group_trust_mean - first)
+    feedback <- max(-3, min(3, feedback))
     
-    # BETA UPDATE
+     # BETA UPDATE
     result <- betaFaceModel(
       trust1 = first,
       total1 = n_total_rating,
@@ -111,8 +109,13 @@ simulate_face_data_beta <- function(face_id, true_mean_face,
       kappa = kappa #added row and kappa
     )
     
+    # Safety check: ensure valid beta parameters
+    alpha <- max(0.001, result$alpha_post)
+    beta <- max(0.001, result$beta_post)
+    
     # probability matching
-    theta_sample <- rbeta(1, result$alpha_post, result$beta_post)
+    theta_sample <- rbeta(1, alpha, beta)
+    theta_sample <- max(0.001, min(0.999, theta_sample))  # clamp to valid range
     second <- rbinom(1, 7, theta_sample)
 
     # SAVE
@@ -144,7 +147,11 @@ generate_all_agents <- function(agents,
     raw_face_value = rnorm(n_faces, mean = 4, sd = 1.2)
   ) %>%
     mutate(
-      true_mean_face = pmin(pmax(raw_face_value, 1), 8), #to keep it in 1-8 (this does truncate tails though)
+      true_mean_face = pmin(pmax(raw_face_value, 1), 8), #to keep it in 1-8 (this does truncate tails though)      
+      group_trust_mean = rnorm(n_faces, mean = 4, sd = 1.2)  # generating the values here to keep them same across all the participants
+    ) %>%
+    mutate(
+      group_trust_mean = pmin(pmax(group_trust_mean, 1), 8)  #also put it in the 1-8 range, but that seemed to cause error 
     )
 
   # loop over agent types
@@ -159,7 +166,8 @@ generate_all_agents <- function(agents,
             true_mean_face = face_params$true_mean_face[f], #there might be an issue with how dynamic this is?
             rho = rho,
             kappa = kappa,
-            n_participants = n_participants
+            n_participants = n_participants,
+            static_group_trust = face_params$group_trust_mean[f] + 1 #adding the static group trust #adding the static group trust
           )
         })
         
@@ -174,6 +182,23 @@ generate_all_agents <- function(agents,
 }
 
 all_data <- generate_all_agents(agents)
+
+all_data <- generate_all_agents(agents)
+
+# DIAGNOSTIC: check ranges
+all_data %>%
+  mutate(check = map(data, ~
+    .x %>%
+      summarize(
+        first_min = min(FirstRating),
+        first_max = max(FirstRating),
+        second_min = min(SecondRating),
+        second_max = max(SecondRating)
+      )
+  )) %>%
+  select(agent_type, check) %>%
+  unnest(check)
+
 
 write_csv(all_data$data[[1]], "data/self_focused_WBA_agent.csv")
 write_csv(all_data$data[[2]], "data/SBA_agent.csv")

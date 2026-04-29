@@ -19,6 +19,7 @@ pacman::p_load(
   bayesplot #Plotting MCMC
 )
 #paths of the fits
+
 results <- readRDS(here("models/fits/results_paths.rds"))
 ```
 
@@ -36,6 +37,19 @@ check_diagnostics <- function(fit_slim, label) {
               min_ebfmi,
               n_fail))
 }
+
+check_params <- function(fit_slim, model_name) {
+  alpha_draws <- fit_slim$draws("alpha_post", format = "df")
+  beta_draws <- fit_slim$draws("beta_post", format = "df")
+  
+  cat("\n", model_name, "parameter bounds:\n")
+  cat("  alpha_post min:", min(alpha_draws, na.rm=TRUE), "\n")
+  cat("  beta_post min:", min(beta_draws, na.rm=TRUE), "\n")
+  cat("  alpha_post max:", max(alpha_draws, na.rm=TRUE), "\n")
+  cat("  beta_post max:", max(beta_draws, na.rm=TRUE), "\n")
+}
+
+
 
 cat("\n=== WBA Diagnostics ===\n")
 invisible(
@@ -79,31 +93,37 @@ loo_results <- imap(results, function(r, dataset_name) {
   cat("\n=== LOO Comparison ===\n")
   print(comparison)
 
-  # --- WEIGHTS (ONLY if safe) ---
-  w <- NULL
-
-  if (all(wba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE) &&
-      all(sba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE)) {
-
+# --- WEIGHTS (ONLY if safe) ---
+w <- NULL
+if (all(wba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE) &&
+    all(sba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE)) {
+  tryCatch({
     w <- loo_model_weights(list(WBA = wba_loo,
                                 SBA = sba_loo),
                            method = "stacking")
-
     cat("\n=== Model Weights (stacking) ===\n")
-    print(w$weights)
+    print(w)
+  }, error = function(e) {
+    cat("\n⚠ Error computing weights:", conditionMessage(e), "\n")
+    w <<- NULL
+  })
+} else {
+  cat("\n⚠ Skipping weights: unstable PSIS (high Pareto-k)\n")
+  w <- NULL
+}
 
-  } else {
-    cat("\n⚠ Skipping weights: unstable PSIS (high Pareto-k)\n")
-  }
-
-  list(
-    comparison = comparison,
-    weights = w
-  )
+list(
+  comparison = comparison,
+  weights = w
+)
 })
 
 #struggling with getting the weights unfortunately (for SBA) as its pareto k blows the fuck up
 #maybe a mistake somewhere in the process? SBA is fully deterministic (fixed=TRUE), or in the model specification?
 #we can assume itd weigh = 1 WBA for all of these... because SBA is misspecified somehow
+
+# If you still have the original data:
+
+
 ```
 #model recovery
