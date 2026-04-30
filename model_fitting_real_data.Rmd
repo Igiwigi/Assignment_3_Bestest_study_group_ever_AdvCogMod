@@ -1,0 +1,31 @@
+---
+title: "model_fitting"
+output: html_document
+date: "2026-04-28"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(
+  tidyverse, # Data manipulation and plotting
+  dplyr,
+  here, # Robust file paths
+  ggplot2, #ggplot
+  cmdstanr,
+  loo,
+  bayesplot #Plotting MCMC
+)
+
+# Parallel Setup: Leave 2 cores free for system stability
+n_cores <- parallel::detectCores() - 2
+
+# Optional: Set a default ggplot theme
+theme_set(theme_classic())
+```
+
+```{r}
+#not done
+```
+

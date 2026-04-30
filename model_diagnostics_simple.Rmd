@@ -18,14 +18,20 @@ pacman::p_load(
   loo,
   bayesplot #Plotting MCMC
 )
-#paths of the fits
-
+#paths of the fits (shouldve been a txt file)
 results <- readRDS(here("models/fits/results_paths.rds"))
+print(results)
+
+#make it your path so you don't have to rerun things, etc. etc.
+#results$self_focused$sba_file <- "C:/Users/Igiba/Documents/sem_7_acm/old_3/models/fits/socially_influenced_sba_fit.rds"
+#results$self_focused$wba_file <- "C:/Users/Igiba/Documents/sem_7_acm/old_3/models/fits/socially_influenced_wba_fit.rds"
+
+#results$balanced$sba_file <- "C:/Users/Igiba/Documents/sem_7_acm/old_3/models/fits/balanced_sba_fit.rds"
+#results$balanced$wba_file <- "C:/Users/Igiba/Documents/sem_7_acm/old_3/models/fits/balanced_wba_fit.rds"
 ```
 
 ```{r}
 #3. CHECKING DIAGNOSTICS (WBA)
-# slim saves are plain lists now, so we access fields with $ instead of calling methods
 check_diagnostics <- function(fit_slim, label) {
   diag_smry <- fit_slim$diagnostic_summary        # already computed at save time, no method call needed
   min_ebfmi <- suppressWarnings(min(diag_smry$ebfmi, na.rm = TRUE))
@@ -37,19 +43,6 @@ check_diagnostics <- function(fit_slim, label) {
               min_ebfmi,
               n_fail))
 }
-
-check_params <- function(fit_slim, model_name) {
-  alpha_draws <- fit_slim$draws("alpha_post", format = "df")
-  beta_draws <- fit_slim$draws("beta_post", format = "df")
-  
-  cat("\n", model_name, "parameter bounds:\n")
-  cat("  alpha_post min:", min(alpha_draws, na.rm=TRUE), "\n")
-  cat("  beta_post min:", min(beta_draws, na.rm=TRUE), "\n")
-  cat("  alpha_post max:", max(alpha_draws, na.rm=TRUE), "\n")
-  cat("  beta_post max:", max(beta_draws, na.rm=TRUE), "\n")
-}
-
-
 
 cat("\n=== WBA Diagnostics ===\n")
 invisible(
@@ -93,37 +86,30 @@ loo_results <- imap(results, function(r, dataset_name) {
   cat("\n=== LOO Comparison ===\n")
   print(comparison)
 
-# --- WEIGHTS (ONLY if safe) ---
-w <- NULL
-if (all(wba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE) &&
-    all(sba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE)) {
-  tryCatch({
+  # --- WEIGHTS (ONLY if safe) ---
+  w <- NULL
+
+  if (all(wba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE) &&
+      all(sba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE)) {
+
     w <- loo_model_weights(list(WBA = wba_loo,
                                 SBA = sba_loo),
                            method = "stacking")
-    cat("\n=== Model Weights (stacking) ===\n")
-    print(w)
-  }, error = function(e) {
-    cat("\n⚠ Error computing weights:", conditionMessage(e), "\n")
-    w <<- NULL
-  })
-} else {
-  cat("\n⚠ Skipping weights: unstable PSIS (high Pareto-k)\n")
-  w <- NULL
-}
 
-list(
-  comparison = comparison,
-  weights = w
-)
+    cat("\n=== Model Weights (stacking) ===\n")
+    print(w$weights)
+
+  } else {
+    cat("\n⚠ Skipping weights: unstable PSIS (high Pareto-k)\n")
+  }
+
+  list(
+    comparison = comparison,
+    weights = w
+  )
 })
 
 #struggling with getting the weights unfortunately (for SBA) as its pareto k blows the fuck up
 #maybe a mistake somewhere in the process? SBA is fully deterministic (fixed=TRUE), or in the model specification?
-#we can assume itd weigh = 1 WBA for all of these... because SBA is misspecified somehow
-
-# If you still have the original data:
-
-
+#we can assume itd weigh nearly = 1 WBA for all of these, except maybe balanced (this should be higher SBA due to simplicity)
 ```
-#model recovery
