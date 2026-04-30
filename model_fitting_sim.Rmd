@@ -48,15 +48,15 @@ make_stan_data <- function(df) {
 }
 
 datasets <- list(
-  self_focused        = read_csv(here("data/self_focused_WBA_agent.csv"), n_max=25000), #ONLY take first 25k out of 80k (maybe still too much)
-  balanced            = read_csv(here("data/SBA_agent.csv"), n_max=25000),
-  socially_influenced = read_csv(here("data/socially_influenced_WBA_agent.csv"), n_max=25000)
+  self_focused        = read_csv(("data/self_focused_WBA_agent.csv"), n_max=25000), #ONLY take first 25k out of 80k (maybe still too much)
+  balanced            = read_csv(("data/SBA_agent.csv"), n_max=25000),
+  socially_influenced = read_csv(("data/socially_influenced_WBA_agent.csv"), n_max=25000)
 )
 
-sba_model <- cmdstan_model(here("models/SBA_model2.stan"))
-wba_model <- cmdstan_model(here("models/WBA_model2.stan"))
+sba_model <- cmdstan_model(("models/SBA_model2.stan"))
+wba_model <- cmdstan_model(("models/WBA_model2.stan"))
 
-dir.create(here("models/fits"), recursive = TRUE, showWarnings = FALSE)
+dir.create(("models/fits"), recursive = TRUE, showWarnings = FALSE)
 
 # Save only the minimum needed for diagnostics (i was saving full model fits...)
 save_fit_slim <- function(fit, file_path, fixed_param = FALSE) {
@@ -79,8 +79,8 @@ results <- map(names(datasets), function(dataset_name) {
   d_sba <- d[!names(d) %in% c("prior_kappa_mu", "prior_kappa_sigma")] #doesnt use any of these in the model
   
   # filenames
-  sba_file <- here("models/fits", paste0(dataset_name, "_sba_fit.rds"))
-  wba_file <- here("models/fits", paste0(dataset_name, "_wba_fit.rds"))
+  sba_file <- ("models/fits", paste0(dataset_name, "_sba_fit.rds"))
+  wba_file <- ("models/fits", paste0(dataset_name, "_wba_fit.rds"))
   
   # SBA (though its effectively a type of WBA)
   if (regenerate_simulations_SBA || !file.exists(sba_file)) {
@@ -138,5 +138,5 @@ results <- map(names(datasets), function(dataset_name) {
   
 })
 names(results) <- names(datasets)
-saveRDS(results, here("models/fits/results_paths.rds")) #this is specific to my path though
+saveRDS(results, ("models/fits/results_paths.rds")) #this is specific to my path though
 ```

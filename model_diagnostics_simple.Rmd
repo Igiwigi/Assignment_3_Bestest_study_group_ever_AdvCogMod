@@ -19,7 +19,7 @@ pacman::p_load(
   loo,
   bayesplot #Plotting MCMC
 )
-#paths of the fits (shouldve been a txt file)
+#paths of the fits (shouldve been a txt file...)
 results <- readRDS(("models/fits/results_paths.rds"))
 print(results)
 
