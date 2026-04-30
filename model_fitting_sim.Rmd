@@ -31,7 +31,7 @@ theme_set(theme_classic())
 
 ```{r}
 #to force it to overwrite (regen) simulations
-regenerate_simulations_SBA <-  TRUE 
+regenerate_simulations_SBA <-  FALSE 
 regenerate_simulations_WBA <-  FALSE
 
 #1. SETTING THE STAN DATA
@@ -79,8 +79,8 @@ results <- map(names(datasets), function(dataset_name) {
   d_sba <- d[!names(d) %in% c("prior_kappa_mu", "prior_kappa_sigma")] #doesnt use any of these in the model
   
   # filenames
-  sba_file <- ("models/fits", paste0(dataset_name, "_sba_fit.rds"))
-  wba_file <- ("models/fits", paste0(dataset_name, "_wba_fit.rds"))
+  sba_file <- file.path("models/fits", paste0(dataset_name, "_sba_fit.rds"))
+  wba_file <- file.path("models/fits", paste0(dataset_name, "_wba_fit.rds"))
   
   # SBA (though its effectively a type of WBA)
   if (regenerate_simulations_SBA || !file.exists(sba_file)) {
