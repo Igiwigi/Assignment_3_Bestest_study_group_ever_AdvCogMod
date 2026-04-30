@@ -104,180 +104,122 @@ results$real_data <- list(
   wba_file = here("models/fits/real_data_wba_fit.rds")
 )
 ```
+
+
+
 ```{r}
-# Check GroupRating values
-summary(real_data$GroupRating)
+#diagnostics 
 
-# Find zeros
-real_data %>%
-  filter(GroupRating == 0) %>%
-  head(10)
+library(here)
+library(loo)
 
-# Check all column ranges
-real_data %>%
-  summarise(
-    first_min = min(FirstRating, na.rm = TRUE),
-    first_max = max(FirstRating, na.rm = TRUE),
-    second_min = min(SecondRating, na.rm = TRUE),
-    second_max = max(SecondRating, na.rm = TRUE),
-    group_min = min(GroupRating, na.rm = TRUE),
-    group_max = max(GroupRating, na.rm = TRUE)
-  )
+# Load the slim fit objects you saved for real data
+real_wba_slim <- readRDS(here("models/fits/real_data_wba_fit.rds"))
+real_sba_slim <- readRDS(here("models/fits/real_data_sba_fit.rds"))
+
+cat("\n=== Real Data: LOO ===\n")
+
+# Extract loo objects
+wba_loo <- real_wba_slim$loo
+sba_loo <- real_sba_slim$loo
+
+# Safety check: make sure loo was actually saved
+if (is.null(wba_loo)) stop("WBA loo object is NULL. Check that WBA Stan outputs `log_lik` and `save_fit_slim()` ran.")
+if (is.null(sba_loo)) stop("SBA loo object is NULL. Check that SBA Stan outputs `log_lik` and `save_fit_slim()` ran.")
+
+# Pareto-k diagnostics
+check_k <- function(loo_obj, name) {
+  k <- loo_obj$diagnostics$pareto_k
+  cat("\n", name, "Pareto-k summary:\n", sep = "")
+  print(summary(k))
+
+  if (any(k > 0.7, na.rm = TRUE)) {
+    warning(name, ": high Pareto-k detected → LOO may be unreliable", call. = FALSE)
+  }
+}
+
+check_k(wba_loo, "WBA")
+check_k(sba_loo, "SBA")
+
+# LOO comparison
+comparison <- loo_compare(list(WBA = wba_loo, SBA = sba_loo))
+cat("\n=== LOO Comparison (Real Data) ===\n")
+print(comparison)
+
+# Model weights only if PSIS is stable
+if (all(wba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE) &&
+    all(sba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE)) {
+
+  w <- loo_model_weights(list(WBA = wba_loo, SBA = sba_loo), method = "stacking")
+  cat("\n=== Model Weights (stacking, Real Data) ===\n")
+  print(w$weights)
+
+} else {
+  cat("\n⚠ Skipping weights: unstable PSIS (high Pareto-k)\n")
+}
+
 ```
 
 
 ```{r}
-#Posterior and Predictive Check - Real Data Only, from riccardo script
 
-extract_trust_predictive_data <- function(fit_slim, dataset_name, model_name, target_var = "post_pred") {
-  pred_draws <- fit_slim[[target_var]] %>%
-    as_draws_df() %>%
-    select(-c(.chain, .iteration, .draw)) %>%
-    as.matrix()
-  
-  pred_summary <- tibble(
-    obs_id = 1:ncol(pred_draws),
-    pred_mean = colMeans(pred_draws),
-    pred_lower = apply(pred_draws, 2, quantile, 0.025),
-    pred_upper = apply(pred_draws, 2, quantile, 0.975),
-    Dataset = dataset_name,
-    Model = model_name
-  )
-  
-  return(pred_summary)
-}
-
-# plot function
-plot_trust_predictive_check <- function(plot_data, title, subtitle) {
-  ggplot(plot_data, aes(x = pred_mean, fill = Model)) +
-    geom_histogram(alpha = 0.6, bins = 30, position = "identity") +
-    labs(
-      title    = title,
-      subtitle = subtitle,
-      x        = "Predicted Second Rating (1-8)",
-      y        = "Frequency",
-      fill     = "Model"
-    ) +
-    theme_classic() +
-    theme(legend.position = "bottom")
-}
-
-# Extract real data predictions
-wba_post_ppc <- extract_trust_predictive_data(
-  readRDS(here("models/fits/real_data_wba_fit.rds")), 
-  "Real Data", 
-  "WBA"
-)
-
-sba_post_ppc <- extract_trust_predictive_data(
-  readRDS(here("models/fits/real_data_sba_fit.rds")), 
-  "Real Data", 
-  "SBA"
-)
-
-# Plot WBA
-plot_trust_predictive_check(
-  wba_post_ppc,
-  title = "Posterior Predictive Checks: WBA",
-  subtitle = "Real Data"
-)
-
-# Plot SBA
-plot_trust_predictive_check(
-  sba_post_ppc,
-  title = "Posterior Predictive Checks: SBA",
-  subtitle = "Real Data"
-)
-```
-
-
-```{r}
-#again just following riccardos script 
-# Generate WBA prior (with priors on rho and kappa)
-generate_wba_prior <- function(dataset_name, n_draws = 4000) {
-  rho_prior <- rbeta(n_draws, 1, 1)
-  kappa_prior <- rexp(n_draws, 1)
-  
-  pred_samples <- tibble(.draw = 1:n_draws) %>%
-    expand_grid(obs_id = 1:25000) %>%
+generate_wba_prior_by_agent_R <- function(
+  agent_name,
+  rho_agent,
+  kappa_agent,
+  n_draws = 4000,
+  trust1_values = 1:8,
+  group_trust_mean = 4L
+) {
+  sims <- expand_grid(.draw = 1:n_draws, trust1 = trust1_values) %>%
     mutate(
-      rho = rho_prior[.draw],
-      kappa = kappa_prior[.draw],
-      trust1_avg = mean(0:7),
-      group_trust_avg = mean(0:7),
-      alpha_prior = 0.5 + kappa * ((1 - rho) * trust1_avg + rho * group_trust_avg),
-      beta_prior = 0.5 + kappa * ((1 - rho) * (8 - trust1_avg) + rho * (8 - group_trust_avg)),
-      theta = rbeta(n(), pmax(0.001, alpha_prior), pmax(0.001, beta_prior)),
-      pred = rbinom(n(), 8, theta)
+      rho = rho_agent,
+      kappa = kappa_agent,
+      group = as.integer(group_trust_mean),
+
+      # Your Stan logic (using 8 as the max rating)
+      alpha = 0.5 + kappa * ((1 - rho) * trust1 + rho * group),
+      beta  = 0.5 + kappa * ((1 - rho) * (8 - trust1) + rho * (8 - group)),
+
+      theta = rbeta(n(), alpha, beta),
+
+      # Convert to a 1..8 rating: Binomial(7) + 1
+      trust2 = rbinom(n(), size = 7, prob = theta) + 1L
     )
-  
-  pred_summary <- pred_samples %>%
-    group_by(.draw) %>%
-    summarise(pred_mean = mean(pred), .groups = "drop") %>%
+
+  sims %>%
+    group_by(trust1) %>%
     summarise(
-      pred_mean = mean(pred_mean),
-      pred_lower = quantile(pred_mean, 0.025),
-      pred_upper = quantile(pred_mean, 0.975),
-      Dataset = dataset_name,
-      Model = "WBA"
-    )
-  
-  return(pred_summary)
+      p_pred = median(trust2),
+      lower  = as.numeric(quantile(trust2, 0.025)),
+      upper  = as.numeric(quantile(trust2, 0.975)),
+      .groups = "drop"
+    ) %>%
+    mutate(Agent = agent_name)
 }
 
-# Generate SBA prior (fixed rho=0.5, kappa=2.0)
-generate_sba_prior <- function(dataset_name, n_draws = 4000) {
-  rho_fixed <- 0.5
-  kappa_fixed <- 2.0
-  
-  pred_samples <- tibble(.draw = 1:n_draws) %>%
-    expand_grid(obs_id = 1:25000) %>%
-    mutate(
-      rho = rho_fixed,
-      kappa = kappa_fixed,
-      trust1_avg = mean(0:7),
-      group_trust_avg = mean(0:7),
-      alpha_prior = 0.5 + kappa * ((1 - rho) * trust1_avg + rho * group_trust_avg),
-      beta_prior = 0.5 + kappa * ((1 - rho) * (8 - trust1_avg) + rho * (8 - group_trust_avg)),
-      theta = rbeta(n(), pmax(0.001, alpha_prior), pmax(0.001, beta_prior)),
-      pred = rbinom(n(), 8, theta)
-    )
-  
-  pred_summary <- pred_samples %>%
-    group_by(.draw) %>%
-    summarise(pred_mean = mean(pred), .groups = "drop") %>%
-    summarise(
-      pred_mean = mean(pred_mean),
-      pred_lower = quantile(pred_mean, 0.025),
-      pred_upper = quantile(pred_mean, 0.975),
-      Dataset = dataset_name,
-      Model = "SBA"
-    )
-  
-  return(pred_summary)
-}
+# Build the three agents
+agent_prior_ppc <- bind_rows(
+  generate_wba_prior_by_agent_R("Self-Focused",        rho_agent = 0.2, kappa_agent = 2.0),
+  generate_wba_prior_by_agent_R("Balanced",           rho_agent = 0.5, kappa_agent = 2.0),
+  generate_wba_prior_by_agent_R("Socially-Influenced",rho_agent = 0.8, kappa_agent = 2.5)
+)
 
-# Extract both priors for all datasets
-wba_prior_ppc <- map_dfr(names(results), ~ generate_wba_prior(.x))
-sba_prior_ppc <- map_dfr(names(results), ~ generate_sba_prior(.x))
-
-# Combine for comparison
-all_prior_ppc <- bind_rows(wba_prior_ppc, sba_prior_ppc)
-
-# Plot both together with facets
-all_prior_ppc %>%
-  ggplot(aes(x = pred_mean, fill = Model)) +
-  geom_histogram(alpha = 0.6, bins = 30, position = "identity") +
-  facet_wrap(~Dataset) +
+# Plot
+ggplot(agent_prior_ppc, aes(x = trust1, y = p_pred, color = Agent, fill = Agent)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  geom_point(size = 2) +
+  facet_wrap(~Agent) +
+  scale_x_continuous(breaks = 1:8) +
+  scale_y_continuous(limits = c(1, 8), breaks = 1:8) +
   labs(
-    title = "Prior Predictive Checks: WBA vs SBA",
-    subtitle = "Predicted second ratings from prior alone",
-    x = "Predicted Second Rating (1-8)",
-    y = "Frequency",
-    fill = "Model"
+    title = "Prior Predictive Checks: WBA (Agent Priors)",
+    subtitle = "Predicted second rating given first rating ± 95% interval",
+    x = "First Rating (1-8)",
+    y = "Predicted Second Rating (1-8)"
   ) +
   theme_classic() +
-  theme(legend.position = "bottom")
+  theme(legend.position = "none")
 ```
 
 
