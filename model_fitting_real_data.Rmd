@@ -15,7 +15,8 @@ pacman::p_load(
   ggplot2, #ggplot
   cmdstanr,
   loo,
-  bayesplot #Plotting MCMC
+  bayesplot, #Plotting MCMC
+  posterior
 )
 
 # Parallel Setup: Leave 2 cores free for system stability
@@ -25,7 +26,258 @@ n_cores <- parallel::detectCores() - 2
 theme_set(theme_classic())
 ```
 
+
 ```{r}
-#not done
+# Load real data
+
+make_stan_data <- function(df) {
+  list(
+    n                 = nrow(df),
+    trust1            = as.integer(df$FirstRating),
+    trust2            = as.integer(df$SecondRating),
+    group_trust_mean = as.integer(round(df$GroupRating)),  # changed from GroupTrustMean
+    n_total_rating    = 8L,
+    prior_kappa_mu    = 2.0,
+    prior_kappa_sigma = 1.0
+  )
+}
+
+
+# Load the Stan models
+sba_model <- cmdstan_model(here("models/SBA_model2.stan"))
+wba_model <- cmdstan_model(here("models/WBA_model2.stan"))
+
+
+# Now load and fit
+real_data <- read_csv(here("data/cogsci_clean.csv"))
+
+real_data <- real_data %>%
+  mutate(GroupRating = ifelse(GroupRating == 0, 1, GroupRating)) #there were 0s in the group rating 
+
+
+d_real <- make_stan_data(real_data)
+d_real_sba <- d_real[!names(d_real) %in% c("prior_kappa_mu", "prior_kappa_sigma")]
+
+save_fit_slim <- function(fit, file_path, fixed_param = FALSE) {
+  log_lik_matrix <- fit$draws("log_lik", format = "matrix")
+  post_pred_draws <- fit$draws("post_pred", format = "df")  # ← NEW
+  
+  slim <- list(
+    diagnostic_summary = if (fixed_param) NULL else fit$diagnostic_summary(),
+    summary            = if (fixed_param) NULL else fit$summary(),
+    loo                = loo(fit$draws("log_lik", format = "matrix")),
+    post_pred          = post_pred_draws  # ← NEW
+  )
+  saveRDS(slim, file_path)
+  rm(log_lik_matrix, post_pred_draws)  # ← UPDATED
+  gc()
+}
+
+# Fit SBA to real data
+sba_fit_real <- sba_model$sample(
+  data            = d_real_sba,
+  chains          = 4,
+  parallel_chains = min(4, n_cores),
+  iter_warmup     = 500,
+  iter_sampling   = 1000,
+  refresh         = 100,
+  seed            = 123,
+)
+
+# Fit WBA to real data
+wba_fit_real <- wba_model$sample(
+  data            = d_real,
+  chains          = 4,
+  parallel_chains = min(4, n_cores),
+  iter_warmup     = 500,
+  iter_sampling   = 1000,
+  refresh         = 100,
+  seed            = 123
+)
+
+# Save
+save_fit_slim(sba_fit_real, here("models/fits/real_data_sba_fit.rds"))
+save_fit_slim(wba_fit_real, here("models/fits/real_data_wba_fit.rds"))
+
+results$real_data <- list(
+  sba_file = here("models/fits/real_data_sba_fit.rds"),
+  wba_file = here("models/fits/real_data_wba_fit.rds")
+)
 ```
+```{r}
+# Check GroupRating values
+summary(real_data$GroupRating)
+
+# Find zeros
+real_data %>%
+  filter(GroupRating == 0) %>%
+  head(10)
+
+# Check all column ranges
+real_data %>%
+  summarise(
+    first_min = min(FirstRating, na.rm = TRUE),
+    first_max = max(FirstRating, na.rm = TRUE),
+    second_min = min(SecondRating, na.rm = TRUE),
+    second_max = max(SecondRating, na.rm = TRUE),
+    group_min = min(GroupRating, na.rm = TRUE),
+    group_max = max(GroupRating, na.rm = TRUE)
+  )
+```
+
+
+```{r}
+#Posterior and Predictive Check - Real Data Only, from riccardo script
+
+extract_trust_predictive_data <- function(fit_slim, dataset_name, model_name, target_var = "post_pred") {
+  pred_draws <- fit_slim[[target_var]] %>%
+    as_draws_df() %>%
+    select(-c(.chain, .iteration, .draw)) %>%
+    as.matrix()
+  
+  pred_summary <- tibble(
+    obs_id = 1:ncol(pred_draws),
+    pred_mean = colMeans(pred_draws),
+    pred_lower = apply(pred_draws, 2, quantile, 0.025),
+    pred_upper = apply(pred_draws, 2, quantile, 0.975),
+    Dataset = dataset_name,
+    Model = model_name
+  )
+  
+  return(pred_summary)
+}
+
+# plot function
+plot_trust_predictive_check <- function(plot_data, title, subtitle) {
+  ggplot(plot_data, aes(x = pred_mean, fill = Model)) +
+    geom_histogram(alpha = 0.6, bins = 30, position = "identity") +
+    labs(
+      title    = title,
+      subtitle = subtitle,
+      x        = "Predicted Second Rating (1-8)",
+      y        = "Frequency",
+      fill     = "Model"
+    ) +
+    theme_classic() +
+    theme(legend.position = "bottom")
+}
+
+# Extract real data predictions
+wba_post_ppc <- extract_trust_predictive_data(
+  readRDS(here("models/fits/real_data_wba_fit.rds")), 
+  "Real Data", 
+  "WBA"
+)
+
+sba_post_ppc <- extract_trust_predictive_data(
+  readRDS(here("models/fits/real_data_sba_fit.rds")), 
+  "Real Data", 
+  "SBA"
+)
+
+# Plot WBA
+plot_trust_predictive_check(
+  wba_post_ppc,
+  title = "Posterior Predictive Checks: WBA",
+  subtitle = "Real Data"
+)
+
+# Plot SBA
+plot_trust_predictive_check(
+  sba_post_ppc,
+  title = "Posterior Predictive Checks: SBA",
+  subtitle = "Real Data"
+)
+```
+
+
+```{r}
+#again just following riccardos script 
+# Generate WBA prior (with priors on rho and kappa)
+generate_wba_prior <- function(dataset_name, n_draws = 4000) {
+  rho_prior <- rbeta(n_draws, 1, 1)
+  kappa_prior <- rexp(n_draws, 1)
+  
+  pred_samples <- tibble(.draw = 1:n_draws) %>%
+    expand_grid(obs_id = 1:25000) %>%
+    mutate(
+      rho = rho_prior[.draw],
+      kappa = kappa_prior[.draw],
+      trust1_avg = mean(0:7),
+      group_trust_avg = mean(0:7),
+      alpha_prior = 0.5 + kappa * ((1 - rho) * trust1_avg + rho * group_trust_avg),
+      beta_prior = 0.5 + kappa * ((1 - rho) * (8 - trust1_avg) + rho * (8 - group_trust_avg)),
+      theta = rbeta(n(), pmax(0.001, alpha_prior), pmax(0.001, beta_prior)),
+      pred = rbinom(n(), 8, theta)
+    )
+  
+  pred_summary <- pred_samples %>%
+    group_by(.draw) %>%
+    summarise(pred_mean = mean(pred), .groups = "drop") %>%
+    summarise(
+      pred_mean = mean(pred_mean),
+      pred_lower = quantile(pred_mean, 0.025),
+      pred_upper = quantile(pred_mean, 0.975),
+      Dataset = dataset_name,
+      Model = "WBA"
+    )
+  
+  return(pred_summary)
+}
+
+# Generate SBA prior (fixed rho=0.5, kappa=2.0)
+generate_sba_prior <- function(dataset_name, n_draws = 4000) {
+  rho_fixed <- 0.5
+  kappa_fixed <- 2.0
+  
+  pred_samples <- tibble(.draw = 1:n_draws) %>%
+    expand_grid(obs_id = 1:25000) %>%
+    mutate(
+      rho = rho_fixed,
+      kappa = kappa_fixed,
+      trust1_avg = mean(0:7),
+      group_trust_avg = mean(0:7),
+      alpha_prior = 0.5 + kappa * ((1 - rho) * trust1_avg + rho * group_trust_avg),
+      beta_prior = 0.5 + kappa * ((1 - rho) * (8 - trust1_avg) + rho * (8 - group_trust_avg)),
+      theta = rbeta(n(), pmax(0.001, alpha_prior), pmax(0.001, beta_prior)),
+      pred = rbinom(n(), 8, theta)
+    )
+  
+  pred_summary <- pred_samples %>%
+    group_by(.draw) %>%
+    summarise(pred_mean = mean(pred), .groups = "drop") %>%
+    summarise(
+      pred_mean = mean(pred_mean),
+      pred_lower = quantile(pred_mean, 0.025),
+      pred_upper = quantile(pred_mean, 0.975),
+      Dataset = dataset_name,
+      Model = "SBA"
+    )
+  
+  return(pred_summary)
+}
+
+# Extract both priors for all datasets
+wba_prior_ppc <- map_dfr(names(results), ~ generate_wba_prior(.x))
+sba_prior_ppc <- map_dfr(names(results), ~ generate_sba_prior(.x))
+
+# Combine for comparison
+all_prior_ppc <- bind_rows(wba_prior_ppc, sba_prior_ppc)
+
+# Plot both together with facets
+all_prior_ppc %>%
+  ggplot(aes(x = pred_mean, fill = Model)) +
+  geom_histogram(alpha = 0.6, bins = 30, position = "identity") +
+  facet_wrap(~Dataset) +
+  labs(
+    title = "Prior Predictive Checks: WBA vs SBA",
+    subtitle = "Predicted second ratings from prior alone",
+    x = "Predicted Second Rating (1-8)",
+    y = "Frequency",
+    fill = "Model"
+  ) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
 

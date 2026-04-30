@@ -2,9 +2,9 @@
 
 data {
   int<lower=1> n;
-  array[n] int<lower=0, upper=7> trust1;
-  array[n] int<lower=0, upper=7> trust2;
-  array[n] int<lower=0, upper=7> group_trust_mean; //NOTE: there is a mismatch here! 
+  array[n] int<lower=1, upper=8> trust1;
+  array[n] int<lower=1, upper=8> trust2;
+  array[n] int<lower=1, upper=8> group_trust_mean; //NOTE: there is a mismatch here! 
   //group trust updates in our simulation, participant after participant, but here it assumes there's one "true" stable value
   //ideally, would fix this by either making this one adaptive or by changing the data simulation logic
   int<lower=1> n_total_rating;
@@ -39,25 +39,25 @@ model {
 
 //ADD BACK IN WHEN RUNNING ON REAL DATA (posterior & prior preds)
 generated quantities {
-  // real rho_prior   = beta_rng(2, 2);
-  // real kappa_prior = lognormal_rng(log(prior_kappa_mu), prior_kappa_sigma);
-  // array[n] int  post_pred;
-  // array[n] int  prior_pred;
+   real rho_prior   = beta_rng(2, 2);
+   real kappa_prior = lognormal_rng(log(prior_kappa_mu), prior_kappa_sigma);
+   array[n] int  post_pred;
+   array[n] int  prior_pred;
   array[n] real log_lik;
   
   for (i in 1:n) {
     // posterior predictive -- commented out, not needed for bare minimum diagnostics + LOO
-    // real theta_post  = beta_rng(alpha_post[i], beta_post[i]);
-    // post_pred[i]     = binomial_rng(n_total_rating, theta_post);
+    real theta_post  = beta_rng(alpha_post[i], beta_post[i]);
+    post_pred[i]     = binomial_rng(n_total_rating, theta_post);
     // prior predictive -- commented out, not needed for bare minimum diagnostics + LOO
-    // real a_pr = 0.5 + kappa_prior * (
-    //   (1 - rho_prior) * trust1[i] +
-    //   rho_prior        * group_trust_mean[i]);
-    // real b_pr = 0.5 + kappa_prior * (
-    //   (1 - rho_prior) * (n_total_rating - trust1[i]) +
-    //   rho_prior        * (n_total_rating - group_trust_mean[i]));
-    // real theta_prior = beta_rng(fmax(0.01, a_pr), fmax(0.01, b_pr));
-    // prior_pred[i]    = binomial_rng(n_total_rating, theta_prior);
+     real a_pr = 0.5 + kappa_prior * (
+       (1 - rho_prior) * trust1[i] +
+       rho_prior        * group_trust_mean[i]);
+     real b_pr = 0.5 + kappa_prior * (
+       (1 - rho_prior) * (n_total_rating - trust1[i]) +
+       rho_prior        * (n_total_rating - group_trust_mean[i]));
+     real theta_prior = beta_rng(fmax(0.01, a_pr), fmax(0.01, b_pr));
+     prior_pred[i]    = binomial_rng(n_total_rating, theta_prior);
     // log likelihood for LOO
     log_lik[i] = beta_binomial_lpmf(trust2[i] | n_total_rating,
                                      alpha_post[i], beta_post[i]);
