@@ -7,6 +7,7 @@ date: "2026-04-28"
 #not doing expansive param recovery etc. due to time constraints (just the bare minimum)
 # (also param recovery would probably be hampered by the model & data logic differing on the group mean trustworthiness value? -- fixed mean vs adaptive mean. can't really bother to fix that right now, could be an issue technically?)
 
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 pacman::p_load(
@@ -19,15 +20,27 @@ pacman::p_load(
   bayesplot #Plotting MCMC
 )
 #paths of the fits (shouldve been a txt file)
-results <- readRDS(here("models/fits/results_paths.rds"))
+results <- readRDS(("models/fits/results_paths.rds"))
 print(results)
 
 #make it your path so you don't have to rerun things, etc. etc.
-#results$self_focused$sba_file <- "C:/Users/Igiba/Documents/sem_7_acm/old_3/models/fits/socially_influenced_sba_fit.rds"
-#results$self_focused$wba_file <- "C:/Users/Igiba/Documents/sem_7_acm/old_3/models/fits/socially_influenced_wba_fit.rds"
+#this was a VERY stupid way of doing this!!
+base_path <- "C:/Users/Igiba/Documents/sem_7_acm/Assignment_3_Bestest_study_group_ever_AdvCogMod/models/fits/"
 
-#results$balanced$sba_file <- "C:/Users/Igiba/Documents/sem_7_acm/old_3/models/fits/balanced_sba_fit.rds"
-#results$balanced$wba_file <- "C:/Users/Igiba/Documents/sem_7_acm/old_3/models/fits/balanced_wba_fit.rds"
+results$self_focused <- list(
+  sba_file = paste0(base_path, "socially_influenced_sba_fit.rds"),
+  wba_file = paste0(base_path, "socially_influenced_wba_fit.rds")
+)
+
+results$balanced <- list(
+  sba_file = paste0(base_path, "balanced_sba_fit.rds"),
+  wba_file = paste0(base_path, "balanced_wba_fit.rds")
+)
+
+results$socially_influenced <- list(
+  sba_file = paste0(base_path, "socially_influenced_sba_fit.rds"),
+  wba_file = paste0(base_path, "socially_influenced_wba_fit.rds")
+)
 ```
 
 ```{r}
