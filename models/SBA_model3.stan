@@ -4,9 +4,9 @@
 /// testing an alternative model
 data {
   int<lower=1> n;
-  array[n] int<lower=1, upper=8> trust1;
-  array[n] int<lower=1, upper=8> trust2;
-  array[n] int<lower=1, upper=8> group_trust_mean;
+  array[n] int<lower=0, upper=7> trust1;
+  array[n] int<lower=0, upper=7> trust2;
+  array[n] int<lower=0, upper=7> group_trust_mean;
   int<lower=1> n_total_rating;
   real<lower=0> prior_kappa_mu;
   real<lower=0> prior_kappa_sigma;
@@ -14,6 +14,8 @@ data {
 parameters {
   real<lower=0, upper=50> kappa;
 }
+
+//the same as the WBA but with hardcoded rho as 0.5
 transformed parameters {
   vector[n] alpha_post = 0.5 + kappa * (
     0.5 * to_vector(trust1) +
@@ -24,6 +26,7 @@ transformed parameters {
     0.5 * (n_total_rating - to_vector(group_trust_mean))
   );
 }
+
 model {
   kappa ~ lognormal(log(prior_kappa_mu), prior_kappa_sigma);
   target += beta_binomial_lpmf(trust2 | n_total_rating, alpha_post, beta_post);

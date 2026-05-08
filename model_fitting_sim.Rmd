@@ -5,12 +5,7 @@ date: "2026-04-28"
 ---
 #now we fit the 2 models (WBA and SBA) to each dataset & then compare which model "best explains" which dataset (3 datasets: selfish, balanced, social)
 
-#pareto k are high for SBA
-
-```{r}
-getwd()
-```
-
+#WBA has rho and kappa free, SBA has kappa free
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -37,17 +32,17 @@ theme_set(theme_classic())
 ```{r}
 #to force it to overwrite (regen) simulations
 regenerate_simulations_SBA <-  TRUE 
-regenerate_simulations_WBA <-  FALSE
+regenerate_simulations_WBA <-  TRUE
 
 #1. SETTING THE STAN DATA
 #had to change these to 1-8
 make_stan_data <- function(df) {
   list(
     n                 = nrow(df),
-    trust1            = as.integer(df$FirstRating),
-    trust2            = as.integer(df$SecondRating),
-    group_trust_mean = pmax(1L, as.integer(round(df$GroupTrustMean))),
-    n_total_rating    = 8L,
+    trust1            = as.integer(df$FirstRating - 1L), #it needs to be 0-7 for the model to work!!
+    trust2            = as.integer(df$SecondRating - 1L),
+    group_trust_mean  = pmin(7L, pmax(0L, as.integer(round(df$GroupTrustMean)))), #already at 0-7 in the data!
+    n_total_rating    = 7L,
     prior_kappa_mu    = 2.0,
     prior_kappa_sigma = 1.0
   ) #(alpha and beta priors are hardcoded 0.5 in the models: jeffers priors)
@@ -59,21 +54,35 @@ datasets <- list(
   socially_influenced = read_csv(("data/socially_influenced_WBA_agent.csv"), n_max=25000)
 )
 
-sba_model <- cmdstan_model(("models/SBA_model3.stan")) #added a free parameter
+#1-8 (trust1) and 0-7 (grp trust mean) (for some reason)
+#come to think of it, we actually never use feedback? --> we assume the grp rating is enough, i suppose? (is this fine? it matches simulation logic, perhaps foolishly)
+summary(datasets$self_focused)
+summary(datasets$balanced)
+summary(datasets$socially_influenced)
+
+sba_model <- cmdstan_model(("models/SBA_model3.stan")) #added a free parameter: kappa
 wba_model <- cmdstan_model(("models/WBA_model2.stan"))
 
 dir.create(("models/fits"), recursive = TRUE, showWarnings = FALSE)
 
-# Save only the minimum needed for diagnostics (i was saving full model fits...)
+# Save only whats needed for diagnostics etc.
 save_fit_slim <- function(fit, file_path, fixed_param = FALSE) {
+
   log_lik_matrix <- fit$draws("log_lik", format = "matrix") #think this slows down saving considerably
+  post_pred_matrix <- fit$draws("post_pred", format = "matrix") #posterior predictive draws
+  prior_pred_matrix <- fit$draws("prior_pred", format = "matrix") #prior predictive draws
+
   slim <- list(
     diagnostic_summary = if (fixed_param) NULL else fit$diagnostic_summary(), # for divergences & E-BFMI
     summary            = if (fixed_param) NULL else fit$summary(),             # for rhat, ess_bulk, ess_tail
-    loo                = loo(fit$draws("log_lik", format = "matrix"))                # for LOO (available for both)
+    loo                = loo(log_lik_matrix),                                  # for LOO (available for both)
+    post_pred          = post_pred_matrix, #on the offchance we want these...                                     
+    prior_pred         = prior_pred_matrix                                    
   )
+
   saveRDS(slim, file_path)
-  rm(log_lik_matrix)
+
+  rm(log_lik_matrix, post_pred_matrix, prior_pred_matrix)
   gc()
 }
 
@@ -82,8 +91,7 @@ results <- map(names(datasets), function(dataset_name) {
   
   df <- datasets[[dataset_name]]
   d <- make_stan_data(df)
-  d_sba <- d[!names(d) %in% c("prior_kappa_mu", "prior_kappa_sigma")] #doesnt use any of these in the model
-  
+
   # filenames
   sba_file <- file.path("models/fits", paste0(dataset_name, "_sba_fit.rds"))
   wba_file <- file.path("models/fits", paste0(dataset_name, "_wba_fit.rds"))
@@ -91,9 +99,8 @@ results <- map(names(datasets), function(dataset_name) {
   # SBA (though its effectively a type of WBA)
   if (regenerate_simulations_SBA || !file.exists(sba_file)) {
     sba_fit <- sba_model$sample(
-      data          = d_sba, #to omit the data it doesnt need
-      #fixed_param   = TRUE, #no freefloating params (so no warmup either)
-      chains        = 2,
+      data          = d, #to omit the data it doesnt need
+      chains        = 4,
       parallel_chains = min(4, n_cores),  #low to save time; kinda redundant to use min
       iter_warmup     = 500, #warmups are slightly lower than 50/50 but still takes forever...
       iter_sampling = 1000,
@@ -101,7 +108,7 @@ results <- map(names(datasets), function(dataset_name) {
       seed = 123
       )
     t1 <- Sys.time()
-    save_fit_slim(sba_fit, sba_file, fixed_param = TRUE) # slim save: diagnostic_summary + summary + log_lik only
+    save_fit_slim(sba_fit, sba_file)
     cat("SBA fit saved to:", sba_file, "\n")
     cat("Save time:", difftime(Sys.time(), t1, units = "secs"), "s\n")
     
