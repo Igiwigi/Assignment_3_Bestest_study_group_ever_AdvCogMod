@@ -4,9 +4,9 @@
 
 data {
   int<lower=1> n;
-  array[n] int<lower=1, upper=8> trust1;      // ← change to 1-8
-  array[n] int<lower=1, upper=8> trust2;      // ← change to 1-8
-  array[n] int<lower=1, upper=8> group_trust_mean; // ← change to 1-8
+  array[n] int<lower=0, upper=7> trust1;      // ← change to 1-8
+  array[n] int<lower=0, upper=7> trust2;      // ← change to 1-8
+  array[n] int<lower=0, upper=7> group_trust_mean; // ← change to 1-8
   //NOTE: there is a mismatch here! 
   //group trust updates in our simulation, participant after participant, but here it assumes there's one "true" stable value
   //ideally, would fix this by either making this one adaptive or by changing the data simulation logic (so they match)

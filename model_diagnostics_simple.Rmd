@@ -86,11 +86,6 @@ loo_results <- imap(results, function(r, dataset_name) {
   wba_loo <- wba_slim$loo
   sba_loo <- sba_slim$loo
   
-  #checking dimensions
-  wba_n <- length(wba_loo$diagnostics$pareto_k)
-  sba_n <- length(sba_loo$diagnostics$pareto_k)
-  cat(sprintf("\n[%s] WBA n=%d | SBA n=%d\n", dataset_name, wba_n, sba_n))
-  
   # --- SAFETY CHECK: Pareto-k diagnostics ---
   check_k <- function(loo_obj, name) {
     k <- loo_obj$diagnostics$pareto_k
@@ -125,7 +120,7 @@ loo_results <- imap(results, function(r, dataset_name) {
       loo_obj
     }
     
-    w <- loo_model_weights(list(WBA = strip_psis(wba_loo), SBA = strip_psis(sba_loo)), method = "pseudobma")
+    w <- loo_model_weights(list(WBA = wba_loo, SBA = sba_loo))
     
     cat("\n=== Model Weights ===\n")
     print(w)
@@ -136,10 +131,11 @@ loo_results <- imap(results, function(r, dataset_name) {
 })
 ```
 
-#trying to figure out why OLD SBA-mimic has issues (OLD ONE!! WILL REPORT THE NEW MODEL MOST LIKELY!!)
+#trying to figure out why OLD SBA-mimic has issues (OLD ONE WITH ALL FIXED PARAMS!! WILL REPORT THE NEW MODEL MOST LIKELY!!)
+#prolly could be more indepth but this was done just d/t curiosity
 #BALANCED
 ```{r}
-sba1 <- readRDS(paste0(base_path, "SBA2_modelfits[old]/balanced_sba_fit.rds", ))
+sba1 <- readRDS(paste0(base_path, "SBA2_modelfits[old]/balanced_sba_fit.rds"))
 pointwise_ll <- sba1$loo$pointwise[, "elpd_loo"]
 
 tibble(obs = seq_along(pointwise_ll), ll = pointwise_ll) |>
@@ -197,14 +193,14 @@ df_diag |>
   select(obs, FirstRating, group_trust_mean_clamped, SecondRating, elpd, signal_conflict) |>
   head(20)
 
-#issues throughout trust1, at big values of trust2 especially but also throughout
+#issues throughout trust1, at extreme values of trust2 especially but also throughout
 #signal conflict (plot 2) is not the reason for issues
 ```
 
 #SELF-FOCUSED
 ```{r}
 #load the elpd
-sba2 <- readRDS(paste0(base_path, "SBA2_modelfits[old]/self_focused_sba_fit.rds", ))
+sba2 <- readRDS(paste0(base_path, "SBA2_modelfits[old]/self_focused_sba_fit.rds" ))
 
 pointwise_ll <- sba2$loo$pointwise[, "elpd_loo"]
 
@@ -253,13 +249,13 @@ df_diag |>
   select(obs, FirstRating, group_trust_mean_clamped, SecondRating, elpd, signal_conflict) |>
   head(20)
 
-#issues throughout trust1, at big values of trust2 especially but also throughout
+#issues throughout trust1, at extreme values of trust2 especially but also throughout
 #signal conflict (plot 2) is not the reason for issues
 ```
 
 #SOCIALLY-INFLUENCED
 ```{r}
-sba3 <- readRDS(paste0(base_path, "SBA2_modelfits[old]/socially_influenced_sba_fit.rds", ))
+sba3 <- readRDS(paste0(base_path, "SBA2_modelfits[old]/socially_influenced_sba_fit.rds"))
 pointwise_ll <- sba3$loo$pointwise[, "elpd_loo"]
 
 df_socialf <- read_csv("data/socially_influenced_WBA_agent.csv", n_max = 25000)
@@ -307,7 +303,7 @@ df_diag |>
   select(obs, FirstRating, group_trust_mean_clamped, SecondRating, elpd, signal_conflict) |>
   head(20)
 
-#issues throughout trust1, at big values of trust2 especially but also throughout
+#issues throughout trust1, at extreme values of trust2 especially but also throughout
 #signal conflict (plot 2) is not the reason for issues
 ```
 #Note: Our OLD SBA is a Fixed prior model with no sampled parameters, equally weighed evidence as per SBA, but also with the same stagnant kappa for every draw
