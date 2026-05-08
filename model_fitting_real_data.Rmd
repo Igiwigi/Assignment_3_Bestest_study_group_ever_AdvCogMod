@@ -211,3 +211,59 @@ ggplot(agent_prior_ppc, aes(x = trust1 + 1, y = p_pred, color = Agent, fill = Ag
   theme_classic() +
   theme(legend.position = "none")
 ```
+```{r}
+##FOR SBA, just quicker to copypaste
+generate_sba_prior_by_agent_R <- function(
+  agent_name,
+  kappa_agent,
+  n_draws = 4000,
+  trust1_values = 0:7,   # 0-7 scale to match Stan!! (adjusted for plots)
+  group_trust_mean = 3L
+) {
+  sims <- expand_grid(.draw = 1:n_draws, trust1 = trust1_values) %>%
+    mutate(
+      rho = 0.5,  # fixed at 0.5 for SBA
+      kappa = kappa_agent,
+      group = as.integer(group_trust_mean),
+      alpha = 0.5 + kappa * ((1 - rho) * trust1 + rho * group),
+      beta  = 0.5 + kappa * ((1 - rho) * (7 - trust1) + rho * (7 - group)),
+      theta = rbeta(n(), alpha, beta),
+      # convert to 1-8
+      trust2 = rbinom(n(), size = 7, prob = theta) + 1L
+    )
+
+  sims %>%
+    group_by(trust1) %>%
+    summarise(
+      p_pred = median(trust2),
+      lower  = as.numeric(quantile(trust2, 0.025)),
+      upper  = as.numeric(quantile(trust2, 0.975)),
+      .groups = "drop"
+    ) %>%
+    mutate(Agent = agent_name)
+}
+
+# SBA only varies kappa, not rho
+agent_prior_ppc_sba <- bind_rows(
+  generate_sba_prior_by_agent_R("Self-Focused",          kappa_agent = 2.0),
+  generate_sba_prior_by_agent_R("Balanced",             kappa_agent = 2.0),
+  generate_sba_prior_by_agent_R("Socially-Influenced", kappa_agent = 2.5)
+)
+
+# Plot (+1 for 1-8 scale!!!)
+ggplot(agent_prior_ppc_sba, aes(x = trust1 + 1, y = p_pred, color = Agent, fill = Agent)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  geom_point(size = 2) +
+  facet_wrap(~Agent) +
+  scale_x_continuous(breaks = 1:8) +
+  scale_y_continuous(limits = c(1, 8), breaks = 1:8) +
+  labs(
+    title = "Prior Predictive Checks: SBA (Agent Priors)",
+    subtitle = "Predicted second rating given first rating ± 95% interval (rho fixed at 0.5 for this model)",
+    x = "First Rating (1-8)",
+    y = "Predicted Second Rating (1-8)"
+  ) +
+  theme_classic() +
+  theme(legend.position = "none")
+```
+
