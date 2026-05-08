@@ -5,7 +5,7 @@ date: "2026-04-28"
 ---
 #plotting the simple diagnostics
 #not doing expansive param recovery etc. due to time constraints (just the bare minimum)
-# (also param recovery would probably be hampered by the model & data logic differing on the group mean trustworthiness value? -- fixed mean vs adaptive mean. can't really bother to fix that right now, could be an issue technically?)
+
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -18,14 +18,37 @@ pacman::p_load(
   loo,
   bayesplot #Plotting MCMC
 )
-#paths of the fits
+#paths of the fits (shouldve been a txt file...)
+results <- readRDS(("models/fits/results_paths.rds"))
+print(results)
 
-results <- readRDS(here("models/fits/results_paths.rds"))
+#make it your path so you don't have to rerun things, etc. etc.
+#this was a VERY stupid way of doing this!!
+base_path <- "C:/Users/Igiba/Documents/sem_7_acm/Assignment_3_Bestest_study_group_ever_AdvCogMod/models/fits/"
+
+#there was a typo here!!
+results$self_focused <- list(
+  sba_file = paste0(base_path, "self_focused_sba_fit.rds"),
+  wba_file = paste0(base_path, "self_focused_wba_fit.rds")
+)
+
+results$balanced <- list(
+  sba_file = paste0(base_path, "balanced_sba_fit.rds"),
+  wba_file = paste0(base_path, "balanced_wba_fit.rds")
+)
+
+results$socially_influenced <- list(
+  sba_file = paste0(base_path, "socially_influenced_sba_fit.rds"),
+  wba_file = paste0(base_path, "socially_influenced_wba_fit.rds")
+)
+
+#old SBA are in SBA2_modelfits[old]/
+#this is going to be plotting the new SBA (with one free param, kappa)
 ```
 
+
 ```{r}
-#3. CHECKING DIAGNOSTICS (WBA)
-# slim saves are plain lists now, so we access fields with $ instead of calling methods
+#3. CHECKING DIAGNOSTICS (WBA & SBA)
 check_diagnostics <- function(fit_slim, label) {
   diag_smry <- fit_slim$diagnostic_summary        # already computed at save time, no method call needed
   min_ebfmi <- suppressWarnings(min(diag_smry$ebfmi, na.rm = TRUE))
@@ -38,19 +61,6 @@ check_diagnostics <- function(fit_slim, label) {
               n_fail))
 }
 
-check_params <- function(fit_slim, model_name) {
-  alpha_draws <- fit_slim$draws("alpha_post", format = "df")
-  beta_draws <- fit_slim$draws("beta_post", format = "df")
-  
-  cat("\n", model_name, "parameter bounds:\n")
-  cat("  alpha_post min:", min(alpha_draws, na.rm=TRUE), "\n")
-  cat("  beta_post min:", min(beta_draws, na.rm=TRUE), "\n")
-  cat("  alpha_post max:", max(alpha_draws, na.rm=TRUE), "\n")
-  cat("  beta_post max:", max(beta_draws, na.rm=TRUE), "\n")
-}
-
-
-
 cat("\n=== WBA Diagnostics ===\n")
 invisible(
   imap(results, function(r, name) {
@@ -59,16 +69,23 @@ invisible(
   })
 )
 
+cat("\n=== SBA Diagnostics ===\n")
+invisible(
+  imap(results, function(r, name) {
+    sba_slim <- readRDS(r$sba_file)
+    check_diagnostics(sba_slim, paste0("SBA_", name))
+  })
+)
+
 #4. LOO COMPARISON PER DATASET (hopefully correct)
 loo_results <- imap(results, function(r, dataset_name) {
-  
   wba_slim <- readRDS(r$wba_file)
   sba_slim <- readRDS(r$sba_file)
-
+  
   # extract loo objects
   wba_loo <- wba_slim$loo
   sba_loo <- sba_slim$loo
-
+  
   # --- SAFETY CHECK: Pareto-k diagnostics ---
   check_k <- function(loo_obj, name) {
     k <- loo_obj$diagnostics$pareto_k
@@ -79,51 +96,220 @@ loo_results <- imap(results, function(r, dataset_name) {
       warning(name, ": high Pareto-k detected → LOO may be unreliable")
     }
   }
-
+  
   cat("\n==============================\n")
   cat("DATASET:", dataset_name, "\n")
-
+  
   check_k(wba_loo, "WBA")
   check_k(sba_loo, "SBA")
-
-  # LOO comparison (safe)
-  comparison <- loo_compare(list(WBA = wba_loo,
-                                SBA = sba_loo))
-
+  
+  # LOO comparison
+  comparison <- loo_compare(list(WBA = wba_loo, SBA = sba_loo))
+  
   cat("\n=== LOO Comparison ===\n")
   print(comparison)
-
-# --- WEIGHTS (ONLY if safe) ---
-w <- NULL
-if (all(wba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE) &&
-    all(sba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE)) {
-  tryCatch({
-    w <- loo_model_weights(list(WBA = wba_loo,
-                                SBA = sba_loo),
-                           method = "stacking")
-    cat("\n=== Model Weights (stacking) ===\n")
-    print(w)
-  }, error = function(e) {
-    cat("\n⚠ Error computing weights:", conditionMessage(e), "\n")
-    w <<- NULL
-  })
-} else {
-  cat("\n⚠ Skipping weights: unstable PSIS (high Pareto-k)\n")
+  
+  # --- WEIGHTS (ONLY if safe to do so!!) ---
   w <- NULL
-}
-
-list(
-  comparison = comparison,
-  weights = w
-)
+  
+  if (all(wba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE) &&
+      all(sba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE)) {
+    strip_psis <- function(loo_obj) {
+      loo_obj$psis_object <- NULL
+      class(loo_obj) <- c("importance_sampling_loo", "loo")
+      loo_obj
+    }
+    
+    w <- loo_model_weights(list(WBA = wba_loo, SBA = sba_loo))
+    
+    cat("\n=== Model Weights ===\n")
+    print(w)
+    
+  } else {
+    cat("\n⚠ Skipping weights: unstable PSIS (high Pareto-k)\n")
+  }
 })
-
-#struggling with getting the weights unfortunately (for SBA) as its pareto k blows the fuck up
-#maybe a mistake somewhere in the process? SBA is fully deterministic (fixed=TRUE), or in the model specification?
-#we can assume itd weigh = 1 WBA for all of these... because SBA is misspecified somehow
-
-# If you still have the original data:
-
-
 ```
-#model recovery
+
+#trying to figure out why OLD SBA-mimic has issues (OLD ONE WITH ALL FIXED PARAMS!! WILL REPORT THE NEW MODEL MOST LIKELY!!)
+#prolly could be more indepth but this was done just d/t curiosity
+#BALANCED
+```{r}
+sba1 <- readRDS(paste0(base_path, "SBA2_modelfits[old]/balanced_sba_fit.rds"))
+pointwise_ll <- sba1$loo$pointwise[, "elpd_loo"]
+
+tibble(obs = seq_along(pointwise_ll), ll = pointwise_ll) |>
+  ggplot(aes(x = obs, y = ll)) +
+  geom_point(alpha = 0.4) +
+  geom_hline(yintercept = -4, color = "red", linetype = "dashed") +
+  labs(title = "SBA pointwise elpd_loo", y = "elpd per obs", x = "observation")
+
+#most are fine? between 0 and -4
+```
+# BALANCED (most SBA-agreeing)
+```{r}
+df_balanced <- read_csv("data/SBA_agent.csv", n_max = 25000)
+
+#clamping it the same
+df_balanced <- df_balanced |>
+  mutate(group_trust_mean_clamped = pmax(1, as.integer(round(GroupTrustMean))))
+
+# joining pointwise ll to data
+df_diag <- df_balanced |>
+  mutate(
+    obs         = row_number(),
+    elpd        = pointwise_ll,
+    bad         = elpd < -4,
+    implied_theta = (0.5 + group_trust_mean_clamped + FirstRating) /
+                    (1 + 2*7 + group_trust_mean_clamped + FirstRating +
+                     (7 - group_trust_mean_clamped) + (7 - FirstRating)),
+    signal_conflict = abs(FirstRating - group_trust_mean_clamped)
+  )
+
+# 1. where do bad observations sit in trust1 x group_mean space?
+df_diag |>
+  ggplot(aes(x = FirstRating, y = group_trust_mean_clamped, color = elpd)) +
+  geom_jitter(alpha = 0.3, width = 0.2, height = 0.2) +
+  scale_color_viridis_c() +
+  labs(title = "elpd by trust1!!! and group mean")
+
+# 2. does signal conflict predict bad fit?
+df_diag |>
+  ggplot(aes(x = signal_conflict, y = elpd)) +
+  geom_jitter(alpha = 0.2, width = 0.1) +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "signal conflict vs elpd")
+
+# 3. what does trust2 look like for bad vs good observations?
+df_diag |>
+  ggplot(aes(x = SecondRating, fill = bad)) +
+  geom_histogram(position = "dodge", bins = 8) +
+  labs(title = "trust2!!! distribution: bad vs good fit observations")
+
+# 4. print the worst cases
+df_diag |>
+  filter(bad) |>
+  arrange(elpd) |>
+  select(obs, FirstRating, group_trust_mean_clamped, SecondRating, elpd, signal_conflict) |>
+  head(20)
+
+#issues throughout trust1, at extreme values of trust2 especially but also throughout
+#signal conflict (plot 2) is not the reason for issues
+```
+
+#SELF-FOCUSED
+```{r}
+#load the elpd
+sba2 <- readRDS(paste0(base_path, "SBA2_modelfits[old]/self_focused_sba_fit.rds" ))
+
+pointwise_ll <- sba2$loo$pointwise[, "elpd_loo"]
+
+df_selffocused <- read_csv("data/self_focused_WBA_agent.csv", n_max = 25000)
+
+#clamping it the same
+df_selffocused <- df_selffocused |>
+  mutate(group_trust_mean_clamped = pmax(1, as.integer(round(GroupTrustMean))))
+
+# joining pointwise ll to data
+df_diag <- df_selffocused |>
+  mutate(
+    obs         = row_number(),
+    elpd        = pointwise_ll,
+    bad         = elpd < -4,
+    implied_theta = (0.5 + group_trust_mean_clamped + FirstRating) /
+                    (1 + 2*7 + group_trust_mean_clamped + FirstRating +
+                     (7 - group_trust_mean_clamped) + (7 - FirstRating)),
+    signal_conflict = abs(FirstRating - group_trust_mean_clamped)
+  )
+
+# 1. where do bad observations sit in trust1 x group_mean space?
+df_diag |>
+  ggplot(aes(x = FirstRating, y = group_trust_mean_clamped, color = elpd)) +
+  geom_jitter(alpha = 0.3, width = 0.2, height = 0.2) +
+  scale_color_viridis_c() +
+  labs(title = "elpd by trust1!!! and group mean")
+
+# 2. does signal conflict predict bad fit?
+df_diag |>
+  ggplot(aes(x = signal_conflict, y = elpd)) +
+  geom_jitter(alpha = 0.2, width = 0.1) +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "signal conflict vs elpd")
+
+# 3. what does trust2 look like for bad vs good observations?
+df_diag |>
+  ggplot(aes(x = SecondRating, fill = bad)) +
+  geom_histogram(position = "dodge", bins = 8) +
+  labs(title = "trust2!!! distribution: bad vs good fit observations")
+
+# 4. print the worst cases
+df_diag |>
+  filter(bad) |>
+  arrange(elpd) |>
+  select(obs, FirstRating, group_trust_mean_clamped, SecondRating, elpd, signal_conflict) |>
+  head(20)
+
+#issues throughout trust1, at extreme values of trust2 especially but also throughout
+#signal conflict (plot 2) is not the reason for issues
+```
+
+#SOCIALLY-INFLUENCED
+```{r}
+sba3 <- readRDS(paste0(base_path, "SBA2_modelfits[old]/socially_influenced_sba_fit.rds"))
+pointwise_ll <- sba3$loo$pointwise[, "elpd_loo"]
+
+df_socialf <- read_csv("data/socially_influenced_WBA_agent.csv", n_max = 25000)
+
+#clamping it the same
+df_socialf <- df_socialf |>
+  mutate(group_trust_mean_clamped = pmax(1, as.integer(round(GroupTrustMean))))
+
+# joining pointwise ll to data (simulation data to model)
+df_diag <- df_socialf |>
+  mutate(
+    obs         = row_number(),
+    elpd        = pointwise_ll,
+    bad         = elpd < -4,
+    implied_theta = (0.5 + group_trust_mean_clamped + FirstRating) /
+                    (1 + 2*7 + group_trust_mean_clamped + FirstRating +
+                     (7 - group_trust_mean_clamped) + (7 - FirstRating)),
+    signal_conflict = abs(FirstRating - group_trust_mean_clamped)
+  )
+
+# 1. where do bad observations sit in trust1 x group_mean space?
+df_diag |>
+  ggplot(aes(x = FirstRating, y = group_trust_mean_clamped, color = elpd)) +
+  geom_jitter(alpha = 0.3, width = 0.2, height = 0.2) +
+  scale_color_viridis_c() +
+  labs(title = "elpd by trust1!!! and group mean")
+
+# 2. does signal conflict predict bad fit?
+df_diag |>
+  ggplot(aes(x = signal_conflict, y = elpd)) +
+  geom_jitter(alpha = 0.2, width = 0.1) +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "signal conflict vs elpd")
+
+# 3. what does trust2 look like for bad vs good observations?
+df_diag |>
+  ggplot(aes(x = SecondRating, fill = bad)) +
+  geom_histogram(position = "dodge", bins = 8) +
+  labs(title = "trust2!!! distribution: bad vs good fit observations")
+
+# 4. print the worst cases
+df_diag |>
+  filter(bad) |>
+  arrange(elpd) |>
+  select(obs, FirstRating, group_trust_mean_clamped, SecondRating, elpd, signal_conflict) |>
+  head(20)
+
+#issues throughout trust1, at extreme values of trust2 especially but also throughout
+#signal conflict (plot 2) is not the reason for issues
+```
+#Note: Our OLD SBA is a Fixed prior model with no sampled parameters, equally weighed evidence as per SBA, but also with the same stagnant kappa for every draw
+#Every MCMC draw has identical alpha_post and beta_post values: there is no posterior uncertainty
+# --> log_lik has zero variance across chains/draws for each observation
+# (Warning: Can't fit generalized Pareto distribution because all tail values are the same.)
+
+
+

@@ -1,0 +1,213 @@
+---
+title: "model_fitting"
+output: html_document
+date: "2026-04-28"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(
+  tidyverse, # Data manipulation and plotting
+  dplyr,
+  ggplot2, #ggplot
+  cmdstanr,
+  loo,
+  bayesplot, #Plotting MCMC
+  posterior
+)
+
+# Parallel Setup: Leave 2 cores free for system stability
+n_cores <- parallel::detectCores() - 2
+
+# Optional: Set a default ggplot theme
+theme_set(theme_classic())
+```
+
+
+```{r}
+# Load real data
+make_stan_data <- function(df) {
+  list(
+    n                 = nrow(df),
+    trust1            = as.integer(df$FirstRating - 1L), #it needs to be 0-7 for the model to work!!
+    trust2            = as.integer(df$SecondRating - 1L),
+    group_trust_mean = pmin(7L, pmax(0L, as.integer(round(df$GroupRating-1L)))), #it needs to be 0-7 for the model to work!!
+    n_total_rating    = 7L,
+    prior_kappa_mu    = 2.0,
+    prior_kappa_sigma = 1.0
+  )
+}
+
+# Load the Stan models
+sba_model <- cmdstan_model("models/SBA_model3.stan")
+wba_model <- cmdstan_model("models/WBA_model2.stan")
+
+# Now load and fit
+real_data <- read_csv("data/cogsci_clean.csv")
+d_real <- make_stan_data(real_data)
+
+# Checking data structure
+names(real_data)
+summary(real_data)
+#note: this data is 1-8 everywhere so needs -1L
+
+save_fit_slim <- function(fit, file_path, fixed_param = FALSE) {
+  log_lik_matrix <- fit$draws("log_lik", format = "matrix")
+  post_pred_draws <- fit$draws("post_pred", format = "df") #for posterior predictive plots
+  
+  slim <- list(
+    diagnostic_summary = if (fixed_param) NULL else fit$diagnostic_summary(),
+    summary            = if (fixed_param) NULL else fit$summary(),
+    loo                = loo(log_lik_matrix), 
+    post_pred          = post_pred_draws #for posterior predictive plots
+  )
+  saveRDS(slim, file_path)
+  rm(log_lik_matrix, post_pred_draws)
+  gc()
+}
+
+# Fit SBA to real data
+sba_fit_real <- sba_model$sample(
+  data            = d_real,
+  chains          = 4,
+  parallel_chains = min(4, n_cores),
+  iter_warmup     = 500,
+  iter_sampling   = 1000,
+  refresh         = 100,
+  seed            = 123,
+)
+
+# Fit WBA to real data
+wba_fit_real <- wba_model$sample(
+  data            = d_real,
+  chains          = 4,
+  parallel_chains = min(4, n_cores),
+  iter_warmup     = 500,
+  iter_sampling   = 1000,
+  refresh         = 100,
+  seed            = 123
+)
+
+# Save
+save_fit_slim(sba_fit_real, "models/fits/real_data_sba_fit.rds")
+save_fit_slim(wba_fit_real, "models/fits/real_data_wba_fit.rds")
+
+results <- list(
+  sba_file = "models/fits/real_data_sba_fit.rds",
+  wba_file = "models/fits/real_data_wba_fit.rds"
+)
+```
+
+
+
+```{r}
+#diagnostics 
+
+# Load the slim fit objects
+real_wba_slim <- readRDS("models/fits/real_data_wba_fit.rds")
+real_sba_slim <- readRDS("models/fits/real_data_sba_fit.rds")
+
+cat("\n=== Real Data: LOO ===\n")
+
+# Extract loo objects
+wba_loo <- real_wba_slim$loo
+sba_loo <- real_sba_slim$loo
+
+# Safety check: make sure loo was actually saved
+if (is.null(wba_loo)) stop("WBA loo object is NULL. Check that WBA Stan outputs `log_lik` and `save_fit_slim()` ran.")
+if (is.null(sba_loo)) stop("SBA loo object is NULL. Check that SBA Stan outputs `log_lik` and `save_fit_slim()` ran.")
+
+# Pareto-k diagnostics
+check_k <- function(loo_obj, name) {
+  k <- loo_obj$diagnostics$pareto_k
+  cat("\n", name, " Pareto-k summary:\n", sep = "")
+  print(summary(k))
+
+  if (any(k > 0.7, na.rm = TRUE)) {
+    warning(name, ": high Pareto-k detected → LOO may be unreliable", call. = FALSE)
+  }
+}
+
+check_k(wba_loo, "WBA")
+check_k(sba_loo, "SBA")
+
+# LOO comparison
+comparison <- loo_compare(list(WBA = wba_loo, SBA = sba_loo))
+cat("\n=== LOO Comparison (Real Data) ===\n")
+print(comparison)
+
+# Model weights only if PSIS is stable
+if (all(wba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE) &&
+    all(sba_loo$diagnostics$pareto_k < 0.7, na.rm = TRUE)) {
+
+  w <- loo_model_weights(list(WBA = wba_loo, SBA = sba_loo), method = "stacking")
+  cat("\n=== Model Weights (stacking, Real Data) ===\n")
+  print(w)
+
+} else {
+  cat("\n⚠ Skipping weights: unstable PSIS (high Pareto-k)\n")
+}
+
+```
+
+#this is adjusted to fit 0-7 and then do 1-8 for plotting
+```{r}
+generate_wba_prior_by_agent_R <- function(
+  agent_name,
+  rho_agent,
+  kappa_agent,
+  n_draws = 4000,
+  trust1_values = 0:7,   # 0-7 scale to match Stan!! (adjusted for plots)
+  group_trust_mean = 3L 
+) {
+  sims <- expand_grid(.draw = 1:n_draws, trust1 = trust1_values) %>%
+    mutate(
+      rho = rho_agent,
+      kappa = kappa_agent,
+      group = as.integer(group_trust_mean),
+
+      alpha = 0.5 + kappa * ((1 - rho) * trust1 + rho * group),
+      beta  = 0.5 + kappa * ((1 - rho) * (7 - trust1) + rho * (7 - group)),
+
+      theta = rbeta(n(), alpha, beta),
+
+      #convert to 1-8 on this
+      trust2 = rbinom(n(), size = 7, prob = theta) + 1L
+    )
+
+  sims %>%
+    group_by(trust1) %>%
+    summarise(
+      p_pred = median(trust2),
+      lower  = as.numeric(quantile(trust2, 0.025)),
+      upper  = as.numeric(quantile(trust2, 0.975)),
+      .groups = "drop"
+    ) %>%
+    mutate(Agent = agent_name)
+}
+
+# Build the three agents
+agent_prior_ppc <- bind_rows(
+  generate_wba_prior_by_agent_R("Self-Focused",         rho_agent = 0.2, kappa_agent = 2.0),
+  generate_wba_prior_by_agent_R("Balanced",             rho_agent = 0.5, kappa_agent = 2.0),
+  generate_wba_prior_by_agent_R("Socially-Influenced",  rho_agent = 0.8, kappa_agent = 2.5)
+)
+
+# Plot (+1 for 1-8 scale!!!)
+ggplot(agent_prior_ppc, aes(x = trust1 + 1, y = p_pred, color = Agent, fill = Agent)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  geom_point(size = 2) +
+  facet_wrap(~Agent) +
+  scale_x_continuous(breaks = 1:8) +
+  scale_y_continuous(limits = c(1, 8), breaks = 1:8) +
+  labs(
+    title = "Prior Predictive Checks: WBA (Agent Priors)",
+    subtitle = "Predicted second rating given first rating ± 95% interval",
+    x = "First Rating (1-8)",
+    y = "Predicted Second Rating (1-8)"
+  ) +
+  theme_classic() +
+  theme(legend.position = "none")
+```
