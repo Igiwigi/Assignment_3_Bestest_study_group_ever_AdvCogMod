@@ -7,7 +7,6 @@ date: "2026-04-28"
 #not doing expansive param recovery etc. due to time constraints (just the bare minimum)
 # (also param recovery would probably be hampered by the model & data logic differing on the group mean trustworthiness value? -- fixed mean vs adaptive mean. can't really bother to fix that right now, could be an issue technically?)
 
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 pacman::p_load(
@@ -27,9 +26,11 @@ print(results)
 #this was a VERY stupid way of doing this!!
 base_path <- "C:/Users/Igiba/Documents/sem_7_acm/Assignment_3_Bestest_study_group_ever_AdvCogMod/models/fits/"
 
+
+#there was a typo here!!
 results$self_focused <- list(
-  sba_file = paste0(base_path, "socially_influenced_sba_fit.rds"),
-  wba_file = paste0(base_path, "socially_influenced_wba_fit.rds")
+  sba_file = paste0(base_path, "self_focused_sba_fit.rds"),
+  wba_file = paste0(base_path, "self_focused_wba_fit.rds")
 )
 
 results$balanced <- list(
@@ -125,4 +126,187 @@ loo_results <- imap(results, function(r, dataset_name) {
 #struggling with getting the weights unfortunately (for SBA) as its pareto k blows the fuck up
 #maybe a mistake somewhere in the process? SBA is fully deterministic (fixed=TRUE), or in the model specification?
 #we can assume itd weigh nearly = 1 WBA for all of these, except maybe balanced (this should be higher SBA due to simplicity)
+
+#this is worse now? For SBA, it sucks even more than it used to(?)
 ```
+
+#trying to figure out why SBA-mimic has issues
+#BALANCED
+```{r}
+sba1 <- readRDS(results$balanced$sba_file)
+pointwise_ll <- sba1$loo$pointwise[, "elpd_loo"]
+
+tibble(obs = seq_along(pointwise_ll), ll = pointwise_ll) |>
+  ggplot(aes(x = obs, y = ll)) +
+  geom_point(alpha = 0.4) +
+  geom_hline(yintercept = -4, color = "red", linetype = "dashed") +
+  labs(title = "SBA pointwise elpd_loo", y = "elpd per obs", x = "observation")
+
+#most are fine? between 0 and -4
+```
+# BALANCED (most SBA-agreeing)
+```{r}
+df_balanced <- read_csv("data/SBA_agent.csv", n_max = 25000)
+
+#clamping it the same
+df_balanced <- df_balanced |>
+  mutate(group_trust_mean_clamped = pmax(1, as.integer(round(GroupTrustMean))))
+
+# joining pointwise ll to data
+df_diag <- df_balanced |>
+  mutate(
+    obs         = row_number(),
+    elpd        = pointwise_ll,
+    bad         = elpd < -4,
+    implied_theta = (0.5 + group_trust_mean_clamped + FirstRating) /
+                    (1 + 2*7 + group_trust_mean_clamped + FirstRating +
+                     (7 - group_trust_mean_clamped) + (7 - FirstRating)),
+    signal_conflict = abs(FirstRating - group_trust_mean_clamped)
+  )
+
+# 1. where do bad observations sit in trust1 x group_mean space?
+df_diag |>
+  ggplot(aes(x = FirstRating, y = group_trust_mean_clamped, color = elpd)) +
+  geom_jitter(alpha = 0.3, width = 0.2, height = 0.2) +
+  scale_color_viridis_c() +
+  labs(title = "elpd by trust1!!! and group mean")
+
+# 2. does signal conflict predict bad fit?
+df_diag |>
+  ggplot(aes(x = signal_conflict, y = elpd)) +
+  geom_jitter(alpha = 0.2, width = 0.1) +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "signal conflict vs elpd")
+
+# 3. what does trust2 look like for bad vs good observations?
+df_diag |>
+  ggplot(aes(x = SecondRating, fill = bad)) +
+  geom_histogram(position = "dodge", bins = 8) +
+  labs(title = "trust2!!! distribution: bad vs good fit observations")
+
+# 4. print the worst cases
+df_diag |>
+  filter(bad) |>
+  arrange(elpd) |>
+  select(obs, FirstRating, group_trust_mean_clamped, SecondRating, elpd, signal_conflict) |>
+  head(20)
+
+#issues throughout trust1, at big values of trust2 especially but also throughout
+#signal conflict (plot 2) is not the reason for issues
+```
+
+#SELF-FOCUSED
+```{r}
+#load the elpd
+sba2 <- readRDS(results$self_focused$sba_file)
+pointwise_ll <- sba2$loo$pointwise[, "elpd_loo"]
+
+df_selffocused <- read_csv("data/self_focused_WBA_agent.csv", n_max = 25000)
+
+#clamping it the same
+df_selffocused <- df_selffocused |>
+  mutate(group_trust_mean_clamped = pmax(1, as.integer(round(GroupTrustMean))))
+
+# joining pointwise ll to data
+df_diag <- df_selffocused |>
+  mutate(
+    obs         = row_number(),
+    elpd        = pointwise_ll,
+    bad         = elpd < -4,
+    implied_theta = (0.5 + group_trust_mean_clamped + FirstRating) /
+                    (1 + 2*7 + group_trust_mean_clamped + FirstRating +
+                     (7 - group_trust_mean_clamped) + (7 - FirstRating)),
+    signal_conflict = abs(FirstRating - group_trust_mean_clamped)
+  )
+
+# 1. where do bad observations sit in trust1 x group_mean space?
+df_diag |>
+  ggplot(aes(x = FirstRating, y = group_trust_mean_clamped, color = elpd)) +
+  geom_jitter(alpha = 0.3, width = 0.2, height = 0.2) +
+  scale_color_viridis_c() +
+  labs(title = "elpd by trust1!!! and group mean")
+
+# 2. does signal conflict predict bad fit?
+df_diag |>
+  ggplot(aes(x = signal_conflict, y = elpd)) +
+  geom_jitter(alpha = 0.2, width = 0.1) +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "signal conflict vs elpd")
+
+# 3. what does trust2 look like for bad vs good observations?
+df_diag |>
+  ggplot(aes(x = SecondRating, fill = bad)) +
+  geom_histogram(position = "dodge", bins = 8) +
+  labs(title = "trust2!!! distribution: bad vs good fit observations")
+
+# 4. print the worst cases
+df_diag |>
+  filter(bad) |>
+  arrange(elpd) |>
+  select(obs, FirstRating, group_trust_mean_clamped, SecondRating, elpd, signal_conflict) |>
+  head(20)
+
+#issues throughout trust1, at big values of trust2 especially but also throughout
+#signal conflict (plot 2) is not the reason for issues
+```
+
+#SOCIALLY-INFLUENCED
+```{r}
+sba3 <- readRDS(results$socially_influenced$sba_file)
+pointwise_ll <- sba3$loo$pointwise[, "elpd_loo"]
+
+df_socialf <- read_csv("data/socially_influenced_WBA_agent.csv", n_max = 25000)
+
+#clamping it the same
+df_socialf <- df_socialf |>
+  mutate(group_trust_mean_clamped = pmax(1, as.integer(round(GroupTrustMean))))
+
+# joining pointwise ll to data (simulation data to model)
+df_diag <- df_socialf |>
+  mutate(
+    obs         = row_number(),
+    elpd        = pointwise_ll,
+    bad         = elpd < -4,
+    implied_theta = (0.5 + group_trust_mean_clamped + FirstRating) /
+                    (1 + 2*7 + group_trust_mean_clamped + FirstRating +
+                     (7 - group_trust_mean_clamped) + (7 - FirstRating)),
+    signal_conflict = abs(FirstRating - group_trust_mean_clamped)
+  )
+
+# 1. where do bad observations sit in trust1 x group_mean space?
+df_diag |>
+  ggplot(aes(x = FirstRating, y = group_trust_mean_clamped, color = elpd)) +
+  geom_jitter(alpha = 0.3, width = 0.2, height = 0.2) +
+  scale_color_viridis_c() +
+  labs(title = "elpd by trust1!!! and group mean")
+
+# 2. does signal conflict predict bad fit?
+df_diag |>
+  ggplot(aes(x = signal_conflict, y = elpd)) +
+  geom_jitter(alpha = 0.2, width = 0.1) +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "signal conflict vs elpd")
+
+# 3. what does trust2 look like for bad vs good observations?
+df_diag |>
+  ggplot(aes(x = SecondRating, fill = bad)) +
+  geom_histogram(position = "dodge", bins = 8) +
+  labs(title = "trust2!!! distribution: bad vs good fit observations")
+
+# 4. print the worst cases
+df_diag |>
+  filter(bad) |>
+  arrange(elpd) |>
+  select(obs, FirstRating, group_trust_mean_clamped, SecondRating, elpd, signal_conflict) |>
+  head(20)
+
+#issues throughout trust1, at big values of trust2 especially but also throughout
+#signal conflict (plot 2) is not the reason for issues
+```
+#Note: Our SBA is a Fixed prior model with no sampled parameters, equally weighed evidence as per SBA, but also same kappa
+#Every MCMC draw has identical alpha_post and beta_post values: there is no posterior uncertainty
+# --> log_lik has zero variance across chains/draws for each observation
+# (Warning: Can't fit generalized Pareto distribution because all tail values are the same.)
+
+
+

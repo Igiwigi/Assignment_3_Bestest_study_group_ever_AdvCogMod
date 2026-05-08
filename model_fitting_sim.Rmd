@@ -7,6 +7,11 @@ date: "2026-04-28"
 
 #pareto k are high for SBA
 
+```{r}
+getwd()
+```
+
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
@@ -31,17 +36,18 @@ theme_set(theme_classic())
 
 ```{r}
 #to force it to overwrite (regen) simulations
-regenerate_simulations_SBA <-  FALSE 
+regenerate_simulations_SBA <-  TRUE 
 regenerate_simulations_WBA <-  FALSE
 
 #1. SETTING THE STAN DATA
+#had to change these to 1-8
 make_stan_data <- function(df) {
   list(
     n                 = nrow(df),
-    trust1            = as.integer(df$FirstRating - 1L), #just to fix it to the right space (its adjusted for plots in the simulating data, 1-8 originally) --> recheck if this works ok (it should be fine?)
-    trust2            = as.integer(df$SecondRating - 1L),
-    group_trust_mean = as.integer(round(df$GroupTrustMean)), #this should be correct and not need -1L (recheck later though)
-    n_total_rating    = 7L,
+    trust1            = as.integer(df$FirstRating),
+    trust2            = as.integer(df$SecondRating),
+    group_trust_mean = pmax(1L, as.integer(round(df$GroupTrustMean))),
+    n_total_rating    = 8L,
     prior_kappa_mu    = 2.0,
     prior_kappa_sigma = 1.0
   ) #(alpha and beta priors are hardcoded 0.5 in the models: jeffers priors)
@@ -53,7 +59,7 @@ datasets <- list(
   socially_influenced = read_csv(("data/socially_influenced_WBA_agent.csv"), n_max=25000)
 )
 
-sba_model <- cmdstan_model(("models/SBA_model2.stan"))
+sba_model <- cmdstan_model(("models/SBA_model3.stan")) #added a free parameter
 wba_model <- cmdstan_model(("models/WBA_model2.stan"))
 
 dir.create(("models/fits"), recursive = TRUE, showWarnings = FALSE)
@@ -86,9 +92,10 @@ results <- map(names(datasets), function(dataset_name) {
   if (regenerate_simulations_SBA || !file.exists(sba_file)) {
     sba_fit <- sba_model$sample(
       data          = d_sba, #to omit the data it doesnt need
-      fixed_param   = TRUE, #no freefloating params (so no warmup either)
+      #fixed_param   = TRUE, #no freefloating params (so no warmup either)
       chains        = 2,
-      parallel_chains = min(2, n_cores),  #low to save time; kinda redundant to use min
+      parallel_chains = min(4, n_cores),  #low to save time; kinda redundant to use min
+      iter_warmup     = 500, #warmups are slightly lower than 50/50 but still takes forever...
       iter_sampling = 1000,
       refresh       = 100,
       seed = 123
