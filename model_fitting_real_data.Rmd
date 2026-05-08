@@ -211,6 +211,7 @@ ggplot(agent_prior_ppc, aes(x = trust1 + 1, y = p_pred, color = Agent, fill = Ag
   theme_classic() +
   theme(legend.position = "none")
 ```
+
 ```{r}
 ##FOR SBA, just quicker to copypaste
 generate_sba_prior_by_agent_R <- function(
@@ -266,4 +267,5 @@ ggplot(agent_prior_ppc_sba, aes(x = trust1 + 1, y = p_pred, color = Agent, fill 
   theme_classic() +
   theme(legend.position = "none")
 ```
+
 
