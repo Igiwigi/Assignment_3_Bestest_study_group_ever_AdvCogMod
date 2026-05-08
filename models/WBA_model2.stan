@@ -39,7 +39,7 @@ model {
 
 //ADD BACK IN WHEN RUNNING ON REAL DATA (posterior & prior preds)
 generated quantities {
-   real rho_prior   = beta_rng(2, 2);
+   real rho_prior   = beta_rng(2, 2); //why do we specify this here but kappa elsewhere tbh?
    real kappa_prior = lognormal_rng(log(prior_kappa_mu), prior_kappa_sigma);
    array[n] int  post_pred;
    array[n] int  prior_pred;

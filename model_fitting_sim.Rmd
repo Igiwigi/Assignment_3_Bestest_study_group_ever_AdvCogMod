@@ -31,8 +31,8 @@ theme_set(theme_classic())
 
 ```{r}
 #to force it to overwrite (regen) simulations
-regenerate_simulations_SBA <-  TRUE 
-regenerate_simulations_WBA <-  TRUE
+regenerate_simulations_SBA <-  FALSE 
+regenerate_simulations_WBA <-  FALSE
 
 #1. SETTING THE STAN DATA
 #had to change these to 1-8
@@ -69,20 +69,20 @@ dir.create(("models/fits"), recursive = TRUE, showWarnings = FALSE)
 save_fit_slim <- function(fit, file_path, fixed_param = FALSE) {
 
   log_lik_matrix <- fit$draws("log_lik", format = "matrix") #think this slows down saving considerably
-  post_pred_matrix <- fit$draws("post_pred", format = "matrix") #posterior predictive draws
-  prior_pred_matrix <- fit$draws("prior_pred", format = "matrix") #prior predictive draws
+  #post_pred_matrix <- fit$draws("post_pred", format = "matrix") #posterior predictive draws (on the offchance we want these... )
+  #prior_pred_matrix <- fit$draws("prior_pred", format = "matrix") #prior predictive draws (on the offchance we want these... )
 
   slim <- list(
     diagnostic_summary = if (fixed_param) NULL else fit$diagnostic_summary(), # for divergences & E-BFMI
     summary            = if (fixed_param) NULL else fit$summary(),             # for rhat, ess_bulk, ess_tail
-    loo                = loo(log_lik_matrix),                                  # for LOO (available for both)
-    post_pred          = post_pred_matrix, #on the offchance we want these...                                     
-    prior_pred         = prior_pred_matrix                                    
+    loo                = loo(log_lik_matrix)                                  # for LOO (available for both)
+    #post_pred          = post_pred_matrix,                                   
+    #prior_pred         = prior_pred_matrix                                     
   )
+  
+  saveRDS(slim, file_path) #add post_pred_matrix etc here if doing
 
-  saveRDS(slim, file_path)
-
-  rm(log_lik_matrix, post_pred_matrix, prior_pred_matrix)
+  rm(log_lik_matrix)
   gc()
 }
 
