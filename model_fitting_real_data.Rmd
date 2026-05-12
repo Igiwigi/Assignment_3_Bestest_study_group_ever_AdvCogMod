@@ -15,7 +15,8 @@ pacman::p_load(
   cmdstanr,
   loo,
   bayesplot, #Plotting MCMC
-  posterior
+  posterior,
+  gridExtra #for showing plots together
 )
 
 # Parallel Setup: Leave 2 cores free for system stability
@@ -196,7 +197,7 @@ agent_prior_ppc <- bind_rows(
 )
 
 # Plot (+1 for 1-8 scale!!!)
-ggplot(agent_prior_ppc, aes(x = trust1 + 1, y = p_pred, color = Agent, fill = Agent)) +
+p1 <- ggplot(agent_prior_ppc, aes(x = trust1 + 1, y = p_pred, color = Agent, fill = Agent)) +
   geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
   geom_point(size = 2) +
   facet_wrap(~Agent) +
@@ -205,8 +206,8 @@ ggplot(agent_prior_ppc, aes(x = trust1 + 1, y = p_pred, color = Agent, fill = Ag
   labs(
     title = "Prior Predictive Checks: WBA (Agent Priors)",
     subtitle = "Predicted second rating given first rating ± 95% interval",
-    x = "First Rating (1-8)",
-    y = "Predicted Second Rating (1-8)"
+    x = "1st Rating (1-8)",
+    y = "Predicted 2nd Rating (1-8)"
   ) +
   theme_classic() +
   theme(legend.position = "none")
@@ -252,7 +253,7 @@ agent_prior_ppc_sba <- bind_rows(
 )
 
 # Plot (+1 for 1-8 scale!!!)
-ggplot(agent_prior_ppc_sba, aes(x = trust1 + 1, y = p_pred, color = Agent, fill = Agent)) +
+p2 <- ggplot(agent_prior_ppc_sba, aes(x = trust1 + 1, y = p_pred, color = Agent, fill = Agent)) +
   geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
   geom_point(size = 2) +
   facet_wrap(~Agent) +
@@ -261,11 +262,56 @@ ggplot(agent_prior_ppc_sba, aes(x = trust1 + 1, y = p_pred, color = Agent, fill 
   labs(
     title = "Prior Predictive Checks: SBA (Agent Priors)",
     subtitle = "Predicted second rating given first rating ± 95% interval (rho fixed at 0.5 for this model)",
-    x = "First Rating (1-8)",
-    y = "Predicted Second Rating (1-8)"
+    x = "1st Rating (1-8)",
+    y = "Predicted 2nd Rating (1-8)"
   ) +
   theme_classic() +
   theme(legend.position = "none")
 ```
+
+```{r}
+#plotting them together for the turn-in
+grid.arrange(p1, p2, ncol = 1, nrow = 2)
+```
+```{r}
+#plotting posterior predictive over the real data
+plot_posterior_predictive <- function(fit_slim, model_name, real_data) {
+  
+  post_pred_median <- fit_slim$post_pred %>%
+  select(starts_with("post_pred")) %>%
+  summarise(across(everything(), ~as.integer(round(median(.))))) %>%
+  pivot_longer(everything(), values_to = "SecondRating") %>%
+  mutate(Source = model_name,
+         SecondRating = SecondRating + 1L)  # back to 1-8
+  
+  real_long <- real_data %>%
+    select(SecondRating) %>%
+    mutate(Source = "Real Data")
+  
+  combined <- bind_rows(real_long, post_pred_median %>% select(SecondRating, Source))
+  
+  ggplot(combined, aes(x = SecondRating, fill = Source)) +
+    geom_bar(position = "dodge") +
+    scale_x_continuous(breaks = 1:8) +
+    labs(
+      title = paste("Posterior Predictive Checks:", model_name),
+      subtitle = "Comparing predictions to observed real data",
+      x = "Second Rating (1-8)",
+      y = "Frequency"
+    ) +
+    scale_fill_manual(values = c("Real Data" = "#F4A7A3",
+                                  setNames("#5DC8C8", model_name))) +
+    theme_classic()
+  
+}
+
+real_data <- read_csv("data/cogsci_clean.csv")
+
+p_wba <- plot_posterior_predictive(real_wba_slim, "WBA", real_data)
+p_sba <- plot_posterior_predictive(real_sba_slim, "SBA", real_data)
+
+grid.arrange(p_wba, p_sba, ncol = 1)
+```
+  
 
 
